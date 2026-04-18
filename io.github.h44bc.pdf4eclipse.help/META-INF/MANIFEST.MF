@@ -1,0 +1,7 @@
+Manifest-Version: 1.0
+Bundle-ManifestVersion: 2
+Bundle-Name: Pdf4Eclipse Help
+Bundle-SymbolicName: io.github.h44bc.pdf4eclipse.help; singleton:=true
+Bundle-Version: 1.1.0.qualifier
+Require-Bundle: org.eclipse.help
+Bundle-RequiredExecutionEnvironment: JavaSE-21
