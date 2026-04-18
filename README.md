@@ -1,97 +1,123 @@
 # Pdf4Eclipse Fork
 
-`Pdf4Eclipse` のメンテナンス fork です。  
-元プロジェクトである [Borisvl/Pdf4Eclipse](https://github.com/Borisvl/Pdf4Eclipse) をベースに、現在の Eclipse / Java 環境で使いやすいように移植と整備を行っています。
+This repository is a maintenance fork of [Borisvl/Pdf4Eclipse](https://github.com/Borisvl/Pdf4Eclipse).
+It keeps the original Eclipse PDF editor usable on newer Eclipse and Java environments while preserving the upstream design as much as possible.
 
-このリポジトリは、upstream の機能と構成を尊重しつつ、以下を主目的として更新したものです。
+## Purpose
 
-- 現行 Eclipse で読み込みやすいプロジェクト構成への整理
-- Java 21 前提の開発環境への調整
-- PDE に加えて Tycho でもビルドできる構成の追加
-- fork 用の bundle / feature / update site ID への置き換え
-- Eclipse 上で PDF を開いて利用できる状態までの保守
+This fork focuses on practical maintenance rather than a full redesign.
+
+- Keep the plugin usable on modern Eclipse
+- Adjust the workspace and bundle layout for current PDE usage
+- Add Tycho-based reproducible builds
+- Publish an installable p2 update site
+- Preserve upstream behavior where possible
 
 ## Origin
 
-この fork は以下の upstream を元にしています。
+This fork is based on the following upstream projects.
 
 - Pdf4Eclipse: [Borisvl/Pdf4Eclipse](https://github.com/Borisvl/Pdf4Eclipse)
 - PDFrenderer fork: [Borisvl/PDFrenderer](https://github.com/Borisvl/PDFrenderer)
 
-PDF 描画系については、upstream と同様に以下の系統を前提としています。
+Rendering support follows the same general upstream approach.
 
-- Sun PDF Renderer 系の fork
-- JPedal LGPL 版
+- Sun PDF Renderer lineage
+- JPedal LGPL edition
 
-ライセンス表記は upstream の内容を尊重しています。詳細は各モジュール内のライセンス表記を確認してください。
+This is not an official successor of the upstream project.
 
 ## About This Fork
 
-この fork は新規実装ではなく、**既存の Pdf4Eclipse を移植・保守するための fork** です。  
-Java パッケージ名は互換性を優先して大部分を upstream のまま維持し、主に次の要素を fork 向けに更新しています。
+This repository is a fork and maintenance port, not a clean-room reimplementation.
+To reduce regression risk, most Java package names are intentionally kept close to upstream, while the following were updated for the fork.
 
-- OSGi bundle ID
-- feature ID
-- repository / update site 構成
-- editor / command / preference などの公開 ID
-- Java 21 で問題になりやすい古い実装や警告の一部
+- OSGi bundle IDs
+- feature IDs
+- repository and update site layout
+- public editor, command, and preference IDs
+- selected Java 21 compatibility fixes
 
 ## Codex Usage
 
-この fork の整備では OpenAI Codex を利用しています。
+This fork was prepared with assistance from OpenAI Codex.
 
-Codex の主な利用範囲は以下です。
+Codex was used to support tasks such as:
 
-- upstream 構成の取り込み補助
-- Eclipse plugin / PDE / Tycho 構成の整理
-- Java 21 対応のための機械的な修正
-- README やビルド設定などの補助的な整備
-- Eclipse 上での警告や依存関係の解消作業の補助
+- importing and reorganizing the upstream project structure
+- adjusting PDE and Tycho build configuration
+- applying compatibility fixes for newer Java and Eclipse versions
+- resolving dependency and workspace issues
+- preparing repository documentation and packaging
 
-最終的な方針決定、確認、採否判断はリポジトリ管理者が行う前提です。  
-したがって、この fork は **Codex を用いて整備した fork** であり、**Codex が単独で生成した独自実装プロジェクト** ではありません。
+Design decisions and final acceptance remain the responsibility of the repository maintainer.
 
-## Current Target Environment
+## Target Environment
 
-- Eclipse 2026 系を想定
+- Eclipse 2026 stream
 - Java 21
 
-実運用上は、Eclipse 上で PDF エディタとして開ける状態を最低ラインとしています。
+The practical baseline for this fork is simple: the plugin should load in Eclipse and open PDF files successfully.
 
 ## Repository Layout
 
 - `io.github.h44bc.pdf4eclipse`
-  - メインの PDF エディタプラグイン
+  Main editor plugin
 - `io.github.h44bc.pdf4eclipse.help`
-  - help コンテンツ
+  Help content plugin
 - `io.github.h44bc.pdf4eclipse.jpedal`
-  - JPedal 関連のバイナリ同梱プラグイン
+  Bundled JPedal-related binary plugin
 - `io.github.h44bc.pdf4eclipse.feature`
-  - Eclipse feature
+  Eclipse feature
 - `io.github.h44bc.pdf4eclipse.repository`
-  - p2 update site 定義
+  p2 update site definition
 
 ## Build
 
-ルートで Tycho ビルドできます。
+Build everything from the repository root:
 
 ```bash
 mvn -U clean verify
 ```
 
-生成される update site は次です。
+The generated p2 repository is created here:
 
 ```text
 io.github.h44bc.pdf4eclipse.repository/target/repository
 ```
 
-Eclipse への導入は `Help > Install New Software...` からこの repository を指定します。
+## Install From GitHub Pages
+
+This repository is configured so that GitHub Actions can build the p2 repository and publish it through GitHub Pages.
+
+### Repository owner setup
+
+1. Open `Settings > Pages`
+2. Set `Source` to `GitHub Actions`
+3. Push to `main` or `master`, or run the `Publish Update Site` workflow manually
+4. After deployment completes, the update site will be available at:
+
+```text
+https://<github-user>.github.io/<repository-name>/
+```
+
+For this repository, that becomes:
+
+```text
+https://afloy.github.io/PDF4Eclipse/
+```
+
+### End user installation
+
+1. Open Eclipse
+2. Open `Help > Install New Software...`
+3. Enter the GitHub Pages URL of the published update site
+4. Select the feature and install it
+5. Restart Eclipse when prompted
 
 ## Development In Eclipse
 
-Eclipse PDE では、各モジュールを既存プロジェクトとして import して利用します。
-
-対象プロジェクト:
+Import these projects into an Eclipse PDE workspace.
 
 - `io.github.h44bc.pdf4eclipse`
 - `io.github.h44bc.pdf4eclipse.help`
@@ -99,27 +125,23 @@ Eclipse PDE では、各モジュールを既存プロジェクトとして impo
 - `io.github.h44bc.pdf4eclipse.feature`
 - `io.github.h44bc.pdf4eclipse.repository`
 
-実行時は `Eclipse Application` の Run Configuration を使い、必要に応じて `Add Required Plug-ins` を実行してください。
+For runtime testing, use an `Eclipse Application` launch configuration and add required plug-ins as needed.
 
 ## Compatibility Policy
 
-この fork は、まず **Eclipse 上で PDF を開いて使えること** を優先しています。  
-大規模な設計変更や描画系の置き換えは現時点では目的にしていません。
+This fork prioritizes conservative maintenance.
 
-そのため、以下の方針を取っています。
+- Prefer upstream-compatible behavior
+- Avoid large renderer replacements
+- Avoid unnecessary package renames
+- Favor incremental fixes over invasive redesign
 
-- upstream の挙動互換を優先
-- Java パッケージ名の全面変更は後回し
-- レンダラ実装の全面刷新は行わない
-- 破壊的変更より保守的な移植を優先
+## License Notes
 
-## Notes
-
-- このリポジトリは upstream の公式後継ではありません。
-- upstream と完全な動作一致を保証するものではありません。
-- 生成物や設定の一部は、現代の Eclipse / Java 環境で扱いやすいように再構成されています。
+License notices are inherited from the upstream project and related bundled components.
+Check each module for the applicable license text and notices.
 
 ## Acknowledgements
 
-元の `Pdf4Eclipse` を公開した Boris von Loesch 氏と、関連する描画ライブラリの作者に感謝します。  
-この fork はそれら既存成果物の上に成り立っています。
+Thanks to Boris von Loesch and the maintainers of the related rendering libraries.
+This fork exists because of their original work.
