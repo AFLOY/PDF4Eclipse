@@ -32,6 +32,9 @@ import org.eclipse.core.resources.IResourceChangeListener;
 import org.eclipse.core.resources.IResourceDelta;
 import org.eclipse.core.resources.ResourcesPlugin;
 import org.eclipse.core.runtime.IProgressMonitor;
+import org.eclipse.core.runtime.IStatus;
+import org.eclipse.core.runtime.Status;
+import org.eclipse.core.runtime.jobs.Job;
 import org.eclipse.core.runtime.preferences.IEclipsePreferences;
 import org.eclipse.core.runtime.preferences.IEclipsePreferences.IPreferenceChangeListener;
 import org.eclipse.core.runtime.preferences.IEclipsePreferences.PreferenceChangeEvent;
@@ -115,6 +118,7 @@ public class PDFEditor extends EditorPart implements IResourceChangeListener,
 	
 	public PDFPageViewer pv;
 	private File file;
+	private long lastModifiedTime;
 
 	private IPDFFile f;
 	private ScrolledComposite sc;
@@ -186,6 +190,7 @@ public class PDFEditor extends EditorPart implements IResourceChangeListener,
 			IEclipsePreferences prefs = InstanceScope.INSTANCE.getNode(Activator.PLUGIN_ID);
 			int r = prefs.getInt(PreferenceConstants.PDF_RENDERER, PDFFactory.STRATEGY_SUN_JPEDAL);
 			f = PDFFactory.openPDFFile(file, r);
+			lastModifiedTime = file.exists() ? file.lastModified() : 0;
 		} catch (FileNotFoundException fnfe) {
 			throw new PartInitException(Messages.PDFEditor_ErrorMsg3, fnfe);
 		} catch (IOException ioe) {
@@ -215,29 +220,15 @@ public class PDFEditor extends EditorPart implements IResourceChangeListener,
 	@Override
 	public void resourceChanged(IResourceChangeEvent event) {
 		if(event.getType() == IResourceChangeEvent.POST_CHANGE){
-			try {
+			if (!(getEditorInput() instanceof IFileEditorInput)) return;
 
-				if (!(getEditorInput() instanceof IFileEditorInput)) return;
-
-				final IFile currentfile = ((IFileEditorInput) getEditorInput()).getFile();
-				final IResourceDelta delta = event.getDelta().findMember(currentfile.getFullPath());
-				if (delta != null && (delta.getKind() & IResourceDelta.REMOVED) == 0) {
-					//readPdfFile();
-					f.reload();
-					final IOutlineNode n = f.getOutline();
-					Display.getDefault().asyncExec(new Runnable() {										
-						@Override
-						public void run() {
-							if (pv != null && !pv.isDisposed()) {
-								showPage(currentPage);
-								if (outline != null) outline.setInput(n);		
-								pv.redraw();
-							}
-						}
-					});
+			final IFile currentfile = ((IFileEditorInput) getEditorInput()).getFile();
+			final IResourceDelta delta = event.getDelta().findMember(currentfile.getFullPath());
+			if (delta != null && (delta.getKind() & IResourceDelta.REMOVED) == 0) {
+				if (file.exists()) {
+					lastModifiedTime = file.lastModified();
 				}
-			} catch (IOException e) {
-				Activator.log("Failed to reload PDF editor state after resource change.", e);
+				triggerReloadJob();
 			}
 		}				
 	}
@@ -465,6 +456,7 @@ public class PDFEditor extends EditorPart implements IResourceChangeListener,
 		}
 
 		initKeyBindingContext();
+		startFilePolling();
 	}
 
     @Override
@@ -781,6 +773,99 @@ public class PDFEditor extends EditorPart implements IResourceChangeListener,
 		sc.setRedraw(false);
 		if (p != null) sc.setOrigin(p);
 		sc.setRedraw(true);
+	}
+
+	private void triggerReloadJob() {
+		Job reloadJob = new Job("Reloading PDF") {
+			@Override
+			protected IStatus run(IProgressMonitor monitor) {
+				int retries = 0;
+				int maxRetries = 10;
+				IPDFFile newFile = null;
+				
+				IEclipsePreferences prefs = InstanceScope.INSTANCE.getNode(Activator.PLUGIN_ID);
+				int r = prefs.getInt(PreferenceConstants.PDF_RENDERER, PDFFactory.STRATEGY_SUN_JPEDAL);
+				
+				while (retries < maxRetries) {
+					if (monitor.isCanceled()) {
+						return Status.CANCEL_STATUS;
+					}
+					try {
+						newFile = PDFFactory.openPDFFile(file, r);
+						if (newFile != null) {
+							break;
+						}
+					} catch (Exception e) {
+						retries++;
+						if (retries >= maxRetries) {
+							Activator.log("Failed to reload PDF after " + maxRetries + " attempts.", e);
+							return Status.OK_STATUS;
+						}
+						try {
+							Thread.sleep(500);
+						} catch (InterruptedException ie) {
+							Thread.currentThread().interrupt();
+							return Status.CANCEL_STATUS;
+						}
+					}
+				}
+				
+				if (newFile != null) {
+					final IPDFFile finalNewFile = newFile;
+					Display.getDefault().asyncExec(new Runnable() {
+						@Override
+						public void run() {
+							if (pv == null || pv.isDisposed()) {
+								finalNewFile.close();
+								return;
+							}
+							
+							IPDFFile oldFile = f;
+							f = finalNewFile;
+							
+							try {
+								final IOutlineNode n = f.getOutline();
+								showPage(currentPage);
+								if (outline != null) {
+									outline.setInput(n);
+								}
+								pv.redraw();
+							} catch (IOException e) {
+								Activator.log("Failed to update UI after PDF reload.", e);
+							} finally {
+								if (oldFile != null) {
+									oldFile.close();
+								}
+							}
+						}
+					});
+				}
+				return Status.OK_STATUS;
+			}
+		};
+		reloadJob.setSystem(true);
+		reloadJob.schedule();
+	}
+
+	private void startFilePolling() {
+		if (file == null || !file.exists()) return;
+		lastModifiedTime = file.lastModified();
+		
+		final Display display = Display.getDefault();
+		display.timerExec(2000, new Runnable() {
+			@Override
+			public void run() {
+				if (pv == null || pv.isDisposed() || f == null) return;
+				if (file.exists()) {
+					long newTime = file.lastModified();
+					if (newTime > lastModifiedTime) {
+						lastModifiedTime = newTime;
+						triggerReloadJob();
+					}
+				}
+				display.timerExec(2000, this);
+			}
+		});
 	}
 
 }
