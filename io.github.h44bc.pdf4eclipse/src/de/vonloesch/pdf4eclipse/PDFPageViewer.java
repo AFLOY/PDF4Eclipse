@@ -367,7 +367,7 @@ public class PDFPageViewer extends Canvas implements PaintListener, IPreferenceC
         Point sz = getSize();
         if (currentImage == null) {
             g.setForeground(getBackground());
-            g.fillRectangle(0, 0, sz.x, sz.y);
+            g.fillRectangle(event.x, event.y, event.width, event.height);
             g.setForeground(display.getSystemColor(SWT.COLOR_BLACK));
             g.drawString(Messages.PDFPageViewer_1, sz.x / 2 - 30, sz.y / 2);
         } else {
@@ -379,41 +379,38 @@ public class PDFPageViewer extends Canvas implements PaintListener, IPreferenceC
             offx = (sz.x - imwid) / 2;
             offy = (sz.y - imhgt) / 2;
 
-            if ((imwid == sz.x && imhgt <= sz.y) ||
-                    (imhgt == sz.y && imwid <= sz.x)) {
-            	
-            	Image temp = new BufferedImage(event.width, event.height, BufferedImage.TYPE_4BYTE_ABGR);
-            	temp.getGraphics().drawImage(currentImage, 0, 0, event.width, event.height, event.x, event.y, 
-            			event.x + event.width, event.y + event.height, null);
+            // Clear the background of the dirty area first
+            g.setBackground(getBackground());
+            g.fillRectangle(event.x, event.y, event.width, event.height);
+
+            // Compute intersection of the event clip rectangle and the image bounds
+            Rectangle imgBounds = new Rectangle(offx, offy, imwid, imhgt);
+            Rectangle clipRect = new Rectangle(event.x, event.y, event.width, event.height);
+            Rectangle intersection = clipRect.intersection(imgBounds);
+
+            if (intersection.width > 0 && intersection.height > 0) {
+            	Image temp = new BufferedImage(intersection.width, intersection.height, BufferedImage.TYPE_4BYTE_ABGR);
+            	int srcX = intersection.x - offx;
+            	int srcY = intersection.y - offy;
+            	temp.getGraphics().drawImage(currentImage, 0, 0, intersection.width, intersection.height, 
+            			srcX, srcY, srcX + intersection.width, srcY + intersection.height, null);
             	org.eclipse.swt.graphics.Image swtImage = new org.eclipse.swt.graphics.Image(display, convertToSWT((BufferedImage)temp));
-            	//if (swtImage != null) g.drawImage(swtImage, offx, offy);
-            	g.drawImage(swtImage, event.x, event.y);
+            	g.drawImage(swtImage, intersection.x, intersection.y);
             	swtImage.dispose();
+            }
 
-            	if (highlightLinks) {
-            		IPDFLinkAnnotation[] anno = currentPage.getAnnotations();
-            		g.setForeground(display.getSystemColor(SWT.COLOR_RED));
-            		for (IPDFLinkAnnotation a : anno) {
-            			Rectangle r = getRectangle(convertPDF2ImageCoord(a.getPosition()));
-            			g.drawRectangle(r);
-            		}
-            	}
-            	//Draw highlight frame
-            	if (highlight != null) {
-                	g.setForeground(display.getSystemColor(SWT.COLOR_BLUE));
-            		g.drawRectangle(getRectangle(highlight));
-            	}
-
-            } else {
-                // the image is bogus.  try again, or give up.
-                if (currentPage != null) {
-                    showPage(currentPage);
-                }
-                g.setForeground(getBackground());
-                g.fillRectangle(0, 0, sz.x, sz.y);                
+            if (highlightLinks) {
+                IPDFLinkAnnotation[] anno = currentPage.getAnnotations();
                 g.setForeground(display.getSystemColor(SWT.COLOR_RED));
-                g.drawLine(0, 0, sz.x, sz.y);
-                g.drawLine(0, sz.y, sz.x, 0);
+                for (IPDFLinkAnnotation a : anno) {
+                    Rectangle r = getRectangle(convertPDF2ImageCoord(a.getPosition()));
+                    g.drawRectangle(r);
+                }
+            }
+            //Draw highlight frame
+            if (highlight != null) {
+                g.setForeground(display.getSystemColor(SWT.COLOR_BLUE));
+                g.drawRectangle(getRectangle(highlight));
             }
         }
     }
