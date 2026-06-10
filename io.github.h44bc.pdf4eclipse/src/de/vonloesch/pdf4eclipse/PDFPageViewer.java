@@ -85,6 +85,7 @@ public class PDFPageViewer extends Canvas implements PaintListener, IPreferenceC
     private int totalHeight;
     private int maxWidth;
     private java.util.Map<Integer, org.eclipse.swt.graphics.Image> pageImageCache = new java.util.HashMap<>();
+    private java.util.Map<Integer, Float> pageImageZoomCache = new java.util.HashMap<>();
     private java.util.Map<Integer, Integer> retryCounts = new java.util.HashMap<>();
     private org.eclipse.swt.widgets.Listener parentResizeListener;
     private float lastZoomFactor = -1f;
@@ -97,7 +98,7 @@ public class PDFPageViewer extends Canvas implements PaintListener, IPreferenceC
     public PDFPageViewer(Composite parent, final PDFEditor editor) {
         //super(parent, SWT.NO_BACKGROUND|SWT.NO_REDRAW_RESIZE);
     	//super(parent, SWT.EMBEDDED | SWT.NO_BACKGROUND | SWT.NO_REDRAW_RESIZE);
-    	super(parent, SWT.NO_BACKGROUND | SWT.NO_MERGE_PAINTS);
+    	super(parent, SWT.NO_BACKGROUND | SWT.NO_MERGE_PAINTS | SWT.DOUBLE_BUFFERED);
     	this.editor = editor;
 
     	this.addMouseListener(new MouseListener() {
@@ -115,16 +116,7 @@ public class PDFPageViewer extends Canvas implements PaintListener, IPreferenceC
 				
 				int pageNr = currentPage != null ? currentPage.getPageNumber() : 1;
 				if (continuousMode) {
-					if (pageOffsets != null) {
-						for (int i = 0; i < pageOffsets.length; i++) {
-							int py = pageOffsets[i];
-							int ph = pageHeights[i];
-							if (cy >= py && cy <= py + ph) {
-								pageNr = i + 1;
-								break;
-							}
-						}
-					}
+					pageNr = getPageNumberForY(cy);
 				}
 				
 				final IPDFPage page = editor.getPDFFile().getPage(pageNr);
@@ -170,16 +162,7 @@ public class PDFPageViewer extends Canvas implements PaintListener, IPreferenceC
 				
 				int pageNr = currentPage != null ? currentPage.getPageNumber() : 1;
 				if (continuousMode) {
-					if (pageOffsets != null) {
-						for (int i = 0; i < pageOffsets.length; i++) {
-							int py = pageOffsets[i];
-							int ph = pageHeights[i];
-							if (cy >= py && cy <= py + ph) {
-								pageNr = i + 1;
-								break;
-							}
-						}
-					}
+					pageNr = getPageNumberForY(cy);
 				}
 				
 				final int targetPageNr = pageNr;
@@ -286,16 +269,11 @@ public class PDFPageViewer extends Canvas implements PaintListener, IPreferenceC
             	data = new ImageData(bufferedImage.getWidth(),
                         bufferedImage.getHeight(), colorModel.getPixelSize(),
                         palette);
-                WritableRaster raster = bufferedImage.getRaster();
-            	int[] pixelArray = new int[3];
-            	for (int y = 0; y < data.height; y++) {
-            		for (int x = 0; x < data.width; x++) {
-            			raster.getPixel(x, y, pixelArray);
-            			int pixel = palette.getPixel(new RGB(pixelArray[0],
-            					pixelArray[1], pixelArray[2]));
-            			data.setPixel(x, y, pixel);
-            		}
-            	}
+            	int[] rbgs = new int[data.width];
+                for (int y = 0; y < data.height; y += 1) {
+                	bufferedImage.getRGB(0, y, data.width, 1, rbgs, 0, data.width);
+                	data.setPixels(0, y, data.width, rbgs, 0);
+                }
             }
             return data;
         }
@@ -320,12 +298,10 @@ public class PDFPageViewer extends Canvas implements PaintListener, IPreferenceC
                     palette);
             data.transparentPixel = colorModel.getTransparentPixel();
             WritableRaster raster = bufferedImage.getRaster();
-            int[] pixelArray = new int[1];
+            int[] pixelArray = new int[data.width];
             for (int y = 0; y < data.height; y++) {
-                for (int x = 0; x < data.width; x++) {
-                    raster.getPixel(x, y, pixelArray);
-                    data.setPixel(x, y, pixelArray[0]);
-                }
+                raster.getPixels(0, y, data.width, 1, pixelArray);
+                data.setPixels(0, y, data.width, pixelArray, 0);
             }
             return data;
         }
@@ -355,7 +331,6 @@ public class PDFPageViewer extends Canvas implements PaintListener, IPreferenceC
 
      	if (continuousMode) {
     		if (zoomFactor != lastZoomFactor) {
-    			clearImageCache();
     			lastZoomFactor = zoomFactor;
     		}
     		calculateLayout();
@@ -366,7 +341,6 @@ public class PDFPageViewer extends Canvas implements PaintListener, IPreferenceC
     			sc.setOrigin(sc.getOrigin().x, py);
     		}
     	} else {
-    		clearImageCache();
     		lastZoomFactor = zoomFactor;
     		int newW = Math.round(zoomFactor*page.getWidth());
     		int newH = Math.round(zoomFactor*page.getHeight());
@@ -394,17 +368,7 @@ public class PDFPageViewer extends Canvas implements PaintListener, IPreferenceC
     public Rectangle2D convertImage2PDFCoord(Rectangle2D r) {
     	if (continuousMode) {
     		int y = (int) r.getY();
-    		int pageNr = 1;
-    		if (pageOffsets != null) {
-    			for (int i = 0; i < pageOffsets.length; i++) {
-    				int py = pageOffsets[i];
-    				int ph = pageHeights[i];
-    				if (y >= py && y <= py + ph) {
-    					pageNr = i + 1;
-    					break;
-    				}
-    			}
-    		}
+    		int pageNr = getPageNumberForY(y);
     		IPDFPage page = editor.getPDFFile().getPage(pageNr);
     		int py = (pageOffsets != null && pageOffsets.length >= pageNr) ? pageOffsets[pageNr - 1] : 0;
     		Rectangle2D localRect = new Rectangle2D.Double(r.getX(), r.getY() - py, r.getWidth(), r.getHeight());
@@ -457,13 +421,10 @@ public class PDFPageViewer extends Canvas implements PaintListener, IPreferenceC
         	int startPage = -1;
         	int endPage = -1;
         	int numPages = f.getNumPages();
-        	for (int i = 0; i < numPages; i++) {
-        		int py = pageOffsets[i];
-        		int ph = pageHeights[i];
-        		if (py <= endY && py + ph >= startY) {
-        			if (startPage == -1) startPage = i + 1;
-        			endPage = i + 1;
-        		}
+        	if (pageOffsets != null && numPages > 0) {
+        		startPage = getPageNumberForY(startY);
+        		endPage = getPageNumberForY(endY);
+        		if (endPage < startPage) endPage = startPage;
         	}
         	
         	if (startPage != -1) {
@@ -603,7 +564,6 @@ public class PDFPageViewer extends Canvas implements PaintListener, IPreferenceC
     		Display.getDefault().asyncExec(new Runnable() {
     			public void run() {
     				if (!isDisposed() && getPage() != null) {
-    					clearImageCache();
     					if (continuousMode) {
     						lastZoomFactor = zoomFactor;
     						calculateLayout();
@@ -623,6 +583,31 @@ public class PDFPageViewer extends Canvas implements PaintListener, IPreferenceC
 	public int[] getPageOffsets() { return pageOffsets; }
 	public int[] getPageHeights() { return pageHeights; }
 	public boolean isContinuousMode() { return continuousMode; }
+
+    /**
+     * Finds the corresponding page number (1-based) for a given Y coordinate in continuous mode.
+     * Uses binary search for O(log N) lookup.
+     */
+    private int getPageNumberForY(int y) {
+        if (pageOffsets == null || pageHeights == null) return 1;
+        int low = 0;
+        int high = pageOffsets.length - 1;
+        while (low <= high) {
+            int mid = (low + high) >>> 1;
+            int py = pageOffsets[mid];
+            int ph = pageHeights[mid];
+            if (y >= py && y <= py + ph) {
+                return mid + 1;
+            } else if (y < py) {
+                high = mid - 1;
+            } else {
+                low = mid + 1;
+            }
+        }
+        // If y is in the spacing between pages, low will point to the next page.
+        // Clamp to valid page range.
+        return Math.max(1, Math.min(low + 1, pageOffsets.length));
+    }
 
     /**
      * Gets the page currently being displayed
@@ -703,6 +688,7 @@ public class PDFPageViewer extends Canvas implements PaintListener, IPreferenceC
 			}
 		}
 		pageImageCache.clear();
+		pageImageZoomCache.clear();
 		renderingPages.clear();
 		retryCounts.clear();
 	}
@@ -716,6 +702,7 @@ public class PDFPageViewer extends Canvas implements PaintListener, IPreferenceC
 		}
 		for (int key : keysToRemove) {
 			org.eclipse.swt.graphics.Image img = pageImageCache.remove(key);
+			pageImageZoomCache.remove(key);
 			if (img != null && !img.isDisposed()) {
 				img.dispose();
 			}
@@ -726,12 +713,22 @@ public class PDFPageViewer extends Canvas implements PaintListener, IPreferenceC
 
 	private org.eclipse.swt.graphics.Image getPageImage(final int pageNr) {
 		org.eclipse.swt.graphics.Image img = pageImageCache.get(pageNr);
-		if (img != null && !img.isDisposed()) {
+		Float imgZoom = pageImageZoomCache.get(pageNr);
+
+		boolean needsRender = false;
+		if (img == null || img.isDisposed()) {
+			needsRender = true;
+		} else if (imgZoom == null || imgZoom != zoomFactor) {
+			needsRender = true;
+		}
+
+		if (!needsRender) {
 			return img;
 		}
 		
 		if (renderingPages.contains(pageNr)) {
-			return null;
+			// Return old image as preview while rendering
+			return (img != null && !img.isDisposed()) ? img : null;
 		}
 		renderingPages.add(pageNr);
 		
@@ -786,6 +783,7 @@ public class PDFPageViewer extends Canvas implements PaintListener, IPreferenceC
 							}
 							org.eclipse.swt.graphics.Image swtImg = new org.eclipse.swt.graphics.Image(display, imgData);
 							org.eclipse.swt.graphics.Image oldImg = pageImageCache.put(pageNr, swtImg);
+							pageImageZoomCache.put(pageNr, jobZoom);
 							if (oldImg != null && !oldImg.isDisposed()) {
 								oldImg.dispose();
 							}
@@ -795,7 +793,7 @@ public class PDFPageViewer extends Canvas implements PaintListener, IPreferenceC
 							if (continuousMode && pageOffsets != null && pageOffsets.length >= pageNr) {
 								int py = pageOffsets[pageNr - 1];
 								int ph = pageHeights[pageNr - 1];
-								redraw(0, py, maxWidth, ph, false);
+								redraw(0, py, getSize().x, ph, false);
 							} else {
 								redraw();
 							}
@@ -834,6 +832,6 @@ public class PDFPageViewer extends Canvas implements PaintListener, IPreferenceC
 		};
 		renderJob.setSystem(true);
 		renderJob.schedule();
-		return null;
+		return (img != null && !img.isDisposed()) ? img : null;
 	}
 }
