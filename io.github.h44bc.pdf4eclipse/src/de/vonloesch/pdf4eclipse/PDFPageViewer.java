@@ -86,6 +86,7 @@ public class PDFPageViewer extends Canvas implements PaintListener, IPreferenceC
     private int maxWidth;
     private java.util.Map<Integer, org.eclipse.swt.graphics.Image> pageImageCache = new java.util.HashMap<>();
     private java.util.Map<Integer, Float> pageImageZoomCache = new java.util.HashMap<>();
+    private java.util.Map<Integer, IPDFPage> renderedPageCache = new java.util.HashMap<>();
     private java.util.Map<Integer, Integer> retryCounts = new java.util.HashMap<>();
     private org.eclipse.swt.widgets.Listener parentResizeListener;
     private float lastZoomFactor = -1f;
@@ -119,7 +120,7 @@ public class PDFPageViewer extends Canvas implements PaintListener, IPreferenceC
 					pageNr = getPageNumberForY(cy);
 				}
 				
-				final IPDFPage page = editor.getPDFFile().getPage(pageNr);
+				final IPDFPage page = renderedPageCache.containsKey(pageNr) ? renderedPageCache.get(pageNr) : editor.getPDFFile().getPage(pageNr);
 				IPDFLinkAnnotation[] annos = page.getAnnotations();
 				
 				int pox = 0;
@@ -166,7 +167,7 @@ public class PDFPageViewer extends Canvas implements PaintListener, IPreferenceC
 				}
 				
 				final int targetPageNr = pageNr;
-				final IPDFPage page = editor.getPDFFile().getPage(targetPageNr);
+				final IPDFPage page = renderedPageCache.containsKey(targetPageNr) ? renderedPageCache.get(targetPageNr) : editor.getPDFFile().getPage(targetPageNr);
 				
 				int pox = 0;
 				int poy = 0;
@@ -320,7 +321,8 @@ public class PDFPageViewer extends Canvas implements PaintListener, IPreferenceC
      */
     public void highlight(double x, double y, double x2, double y2) {
     	Rectangle2D r = new Double(x, currentPage.getHeight() - y2, x2-x, y2 - y);
-    	highlight = convertPDF2ImageCoord(r);
+    	IPDFPage page = renderedPageCache.containsKey(currentPage.getPageNumber()) ? renderedPageCache.get(currentPage.getPageNumber()) : currentPage;
+    	highlight = convertPDF2ImageCoord(r, page);
     }
 
     /**
@@ -356,27 +358,33 @@ public class PDFPageViewer extends Canvas implements PaintListener, IPreferenceC
     }
     
     public Rectangle2D convertPDF2ImageCoord(Rectangle2D r) {
+    	IPDFPage page = renderedPageCache.containsKey(currentPage.getPageNumber()) ? renderedPageCache.get(currentPage.getPageNumber()) : currentPage;
+    	return convertPDF2ImageCoord(r, page);
+    }
+    
+    public Rectangle2D convertPDF2ImageCoord(Rectangle2D r, IPDFPage page) {
     	if (continuousMode) {
-    		Rectangle2D imgRect = currentPage.pdf2ImageCoordinates(r);
-    		if (pageOffsets != null && pageOffsets.length >= currentPage.getPageNumber()) {
-    			int py = pageOffsets[currentPage.getPageNumber() - 1];
+    		Rectangle2D imgRect = page.pdf2ImageCoordinates(r);
+    		if (pageOffsets != null && pageOffsets.length >= page.getPageNumber()) {
+    			int py = pageOffsets[page.getPageNumber() - 1];
     			imgRect.setRect(imgRect.getX(), imgRect.getY() + py, imgRect.getWidth(), imgRect.getHeight());
     		}
     		return imgRect;
     	}
-    	return currentPage.pdf2ImageCoordinates(r);
+    	return page.pdf2ImageCoordinates(r);
     }
     
     public Rectangle2D convertImage2PDFCoord(Rectangle2D r) {
     	if (continuousMode) {
     		int y = (int) r.getY();
     		int pageNr = getPageNumberForY(y);
-    		IPDFPage page = editor.getPDFFile().getPage(pageNr);
+    		IPDFPage page = renderedPageCache.containsKey(pageNr) ? renderedPageCache.get(pageNr) : editor.getPDFFile().getPage(pageNr);
     		int py = (pageOffsets != null && pageOffsets.length >= pageNr) ? pageOffsets[pageNr - 1] : 0;
     		Rectangle2D localRect = new Rectangle2D.Double(r.getX(), r.getY() - py, r.getWidth(), r.getHeight());
     		return page.image2PdfCoordinates(localRect);
     	}
-    	return currentPage.image2PdfCoordinates(r);
+    	IPDFPage page = renderedPageCache.containsKey(currentPage.getPageNumber()) ? renderedPageCache.get(currentPage.getPageNumber()) : currentPage;
+    	return page.image2PdfCoordinates(r);
     }
     
     /**
@@ -530,10 +538,11 @@ public class PDFPageViewer extends Canvas implements PaintListener, IPreferenceC
                 }
                 
                 if (highlightLinks) {
-                    IPDFLinkAnnotation[] anno = currentPage.getAnnotations();
+                	IPDFPage page = renderedPageCache.containsKey(currentPage.getPageNumber()) ? renderedPageCache.get(currentPage.getPageNumber()) : currentPage;
+                    IPDFLinkAnnotation[] anno = page.getAnnotations();
                     g.setForeground(display.getSystemColor(SWT.COLOR_RED));
                     for (IPDFLinkAnnotation a : anno) {
-                        Rectangle r = getRectangle(convertPDF2ImageCoord(a.getPosition()));
+                        Rectangle r = getRectangle(convertPDF2ImageCoord(a.getPosition(), page));
                         r.x += offx;
                         r.y += offy;
                         g.drawRectangle(r);
@@ -691,6 +700,7 @@ public class PDFPageViewer extends Canvas implements PaintListener, IPreferenceC
 		}
 		pageImageCache.clear();
 		pageImageZoomCache.clear();
+		renderedPageCache.clear();
 		renderingPages.clear();
 		retryCounts.clear();
 	}
@@ -705,6 +715,7 @@ public class PDFPageViewer extends Canvas implements PaintListener, IPreferenceC
 		for (int key : keysToRemove) {
 			org.eclipse.swt.graphics.Image img = pageImageCache.remove(key);
 			pageImageZoomCache.remove(key);
+			renderedPageCache.remove(key);
 			if (img != null && !img.isDisposed()) {
 				img.dispose();
 			}
@@ -760,12 +771,13 @@ public class PDFPageViewer extends Canvas implements PaintListener, IPreferenceC
 				}
 				try {
 					Image awtImg;
+					final IPDFPage[] renderedPage = new IPDFPage[1];
 					synchronized (jobFile) {
 						if (editor.getPDFFile() != jobFile) {
 							return org.eclipse.core.runtime.Status.OK_STATUS;
 						}
-						IPDFPage page = jobFile.getPage(pageNr);
-						awtImg = page.getImage(h, w);
+						renderedPage[0] = jobFile.getPage(pageNr);
+						awtImg = renderedPage[0].getImage(h, w);
 					}
 					final ImageData imgData = convertToSWT((BufferedImage) awtImg);
 					awtImg.flush();
@@ -786,6 +798,7 @@ public class PDFPageViewer extends Canvas implements PaintListener, IPreferenceC
 							org.eclipse.swt.graphics.Image swtImg = new org.eclipse.swt.graphics.Image(display, imgData);
 							org.eclipse.swt.graphics.Image oldImg = pageImageCache.put(pageNr, swtImg);
 							pageImageZoomCache.put(pageNr, jobZoom);
+							renderedPageCache.put(pageNr, renderedPage[0]);
 							if (oldImg != null && !oldImg.isDisposed()) {
 								oldImg.dispose();
 							}
