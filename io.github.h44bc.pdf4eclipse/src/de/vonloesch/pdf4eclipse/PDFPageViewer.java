@@ -184,13 +184,15 @@ public class PDFPageViewer extends Canvas implements PaintListener, IPreferenceC
 				
 				final Rectangle2D r = page.image2PdfCoordinates(new java.awt.Rectangle(cx - pox, cy - poy, 1, 1));
 
-				Display.getDefault().asyncExec(new Runnable() {
-					@Override
-					public void run() {
-						currentPage = page;
-						editor.reverseSearch(r.getX(), page.getHeight() - r.getY());
-					}
-				});
+				if (r != null) {
+					Display.getDefault().asyncExec(new Runnable() {
+						@Override
+						public void run() {
+							currentPage = page;
+							editor.reverseSearch(r.getX(), page.getHeight() - r.getY());
+						}
+					});
+				}
 			}
 		});
 
