@@ -53,6 +53,16 @@ public class MainPreferencePage
 				PreferenceConstants.PSEUDO_CONTINUOUS_SCROLLING,
 				Messages.MainPreferencePage_PseudoContScroll,
 				getFieldEditorParent()));
+		addField(
+			new BooleanFieldEditor(
+				PreferenceConstants.PREF_CENTER_PAGE,
+				"ページを中央に表示する (Center page in viewer)",
+				getFieldEditorParent()));
+		addField(
+			new BooleanFieldEditor(
+				PreferenceConstants.PREF_CONTINUOUS_MODE,
+				"連続表示モード (Continuous page display mode)",
+				getFieldEditorParent()));
 		addField(new RadioGroupFieldEditor(PreferenceConstants.PDF_RENDERER, Messages.MainPreferencePage_pdfRenderer, 1, 
 				new String[][]{{Messages.MainPreferencePage_sunRenderer, ""+PDFFactory.STRATEGY_SUN},  //$NON-NLS-2$
 				{Messages.MainPreferencePage_jpedalRenderer, ""+PDFFactory.STRATEGY_JPEDAL},  //$NON-NLS-2$

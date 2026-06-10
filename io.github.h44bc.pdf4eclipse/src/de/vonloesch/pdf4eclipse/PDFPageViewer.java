@@ -38,10 +38,13 @@ import org.eclipse.swt.widgets.Canvas;
 import org.eclipse.swt.widgets.Composite;
 import org.eclipse.swt.widgets.Display;
 
+import org.eclipse.swt.custom.ScrolledComposite;
 import de.vonloesch.pdf4eclipse.editors.PDFEditor;
 import de.vonloesch.pdf4eclipse.editors.handlers.ToggleLinkHighlightHandler;
-import de.vonloesch.pdf4eclipse.model.IPDFLinkAnnotation;
+import de.vonloesch.pdf4eclipse.model.IPDFFile;
 import de.vonloesch.pdf4eclipse.model.IPDFPage;
+import de.vonloesch.pdf4eclipse.model.IPDFLinkAnnotation;
+import de.vonloesch.pdf4eclipse.preferences.PreferenceConstants;
 
 
 /**
@@ -72,6 +75,20 @@ public class PDFPageViewer extends Canvas implements PaintListener, IPreferenceC
     
     private float zoomFactor;
     
+    private PDFEditor editor;
+    private boolean centerPage;
+    private boolean continuousMode;
+
+    // Continuous mode layout data
+    private int[] pageOffsets;
+    private int[] pageHeights;
+    private int totalHeight;
+    private int maxWidth;
+    private java.util.Map<Integer, org.eclipse.swt.graphics.Image> pageImageCache = new java.util.HashMap<>();
+    private java.util.Map<Integer, Integer> retryCounts = new java.util.HashMap<>();
+    private org.eclipse.swt.widgets.Listener parentResizeListener;
+    private float lastZoomFactor = -1f;
+    
     //private org.eclipse.swt.graphics.Image swtImage;
 
     /**
@@ -81,6 +98,7 @@ public class PDFPageViewer extends Canvas implements PaintListener, IPreferenceC
         //super(parent, SWT.NO_BACKGROUND|SWT.NO_REDRAW_RESIZE);
     	//super(parent, SWT.EMBEDDED | SWT.NO_BACKGROUND | SWT.NO_REDRAW_RESIZE);
     	super(parent, SWT.NO_BACKGROUND | SWT.NO_MERGE_PAINTS);
+    	this.editor = editor;
 
     	this.addMouseListener(new MouseListener() {
 			
@@ -90,79 +108,104 @@ public class PDFPageViewer extends Canvas implements PaintListener, IPreferenceC
 			
 			@Override
 			public void mouseDown(org.eclipse.swt.events.MouseEvent e) {
-				
 				if (e.button != 1) return;
 				
-				IPDFLinkAnnotation[] annos = getPage().getAnnotations();
-            	for (final IPDFLinkAnnotation a : annos) {
-            		Rectangle2D r = convertPDF2ImageCoord(a.getPosition());
-            		if (r.contains(e.x, e.y)) {
-            			if (a.getDestination() != null) {	
-            				Display.getDefault().asyncExec(new Runnable() {
-            					@Override
-            					public void run() {
-            						editor.gotoAction(a.getDestination());
-            					}
-            				});
-            				return;
-            			}
-            		}
-            	}
-				/*List<PDFAnnotation> annos = getPage().getAnnots(PDFAnnotation.LINK_ANNOTATION);
-            	for (PDFAnnotation a : annos) {
-            		LinkAnnotation aa = (LinkAnnotation) a;
-            		Rectangle2D r = convertPDF2ImageCoord(aa.getRect());
-            		if (r.contains(e.x, e.y)) {
-            			if (aa.getAction() instanceof GoToAction){
-            				final GoToAction action = (GoToAction) aa.getAction();
-
-            				Display.getDefault().asyncExec(new Runnable() {
+				int cx = e.x;
+				int cy = e.y;
+				
+				int pageNr = currentPage != null ? currentPage.getPageNumber() : 1;
+				if (continuousMode) {
+					if (pageOffsets != null) {
+						for (int i = 0; i < pageOffsets.length; i++) {
+							int py = pageOffsets[i];
+							int ph = pageHeights[i];
+							if (cy >= py && cy <= py + ph) {
+								pageNr = i + 1;
+								break;
+							}
+						}
+					}
+				}
+				
+				final IPDFPage page = editor.getPDFFile().getPage(pageNr);
+				IPDFLinkAnnotation[] annos = page.getAnnotations();
+				
+				int pox = 0;
+				int poy = 0;
+				if (continuousMode) {
+					poy = (pageOffsets != null && pageOffsets.length >= pageNr) ? pageOffsets[pageNr - 1] : 0;
+					if (centerPage) {
+						pox = (getSize().x - Math.round(zoomFactor * page.getWidth())) / 2;
+					}
+				} else {
+					if (centerPage) {
+						pox = offx;
+						poy = offy;
+					}
+				}
+				
+				for (final IPDFLinkAnnotation a : annos) {
+					Rectangle2D r = page.pdf2ImageCoordinates(a.getPosition());
+					if (r.contains(cx - pox, cy - poy)) {
+						if (a.getDestination() != null) {	
+							Display.getDefault().asyncExec(new Runnable() {
 								@Override
 								public void run() {
-									editor.gotoAction(action.getDestination());
+									currentPage = page;
+									editor.gotoAction(a.getDestination());
 								}
 							});
-            				return;
-            			}
-            			else if (aa.getAction() instanceof UriAction) {
-            				final UriAction action = (UriAction) aa.getAction();
-            				Display.getDefault().asyncExec(new Runnable() {
-								
-								@Override
-								public void run() {
-									
-									try {
-										String uri = action.getUri();
-										if (uri.toLowerCase().indexOf("://") < 0) { //$NON-NLS-1$
-											uri = "http://"+uri; //$NON-NLS-1$
-										}
-										PlatformUI.getWorkbench().getBrowserSupport()
-										.createBrowser("PDFBrowser").openURL(new URL(uri)); //$NON-NLS-1$
-									} catch (PartInitException e) {
-										Activator.log("Problem opening browser", e);
-									} catch (MalformedURLException e) {
-										editor.writeStatusLineError(e.getMessage());
-									}
-								}
-							});
-            				return;
-            			}
-            		}
-				}*/
+							return;
+						}
+					}
+				}
 			}
 			
 			@Override
 			public void mouseDoubleClick(org.eclipse.swt.events.MouseEvent e) {
-				
 				if (e.button != 1) return;
 				
-				final Rectangle2D r = convertImage2PDFCoord(new java.awt.Rectangle(e.x, e.y, 1, 1));
+				int cx = e.x;
+				int cy = e.y;
+				
+				int pageNr = currentPage != null ? currentPage.getPageNumber() : 1;
+				if (continuousMode) {
+					if (pageOffsets != null) {
+						for (int i = 0; i < pageOffsets.length; i++) {
+							int py = pageOffsets[i];
+							int ph = pageHeights[i];
+							if (cy >= py && cy <= py + ph) {
+								pageNr = i + 1;
+								break;
+							}
+						}
+					}
+				}
+				
+				final int targetPageNr = pageNr;
+				final IPDFPage page = editor.getPDFFile().getPage(targetPageNr);
+				
+				int pox = 0;
+				int poy = 0;
+				if (continuousMode) {
+					poy = (pageOffsets != null && pageOffsets.length >= targetPageNr) ? pageOffsets[targetPageNr - 1] : 0;
+					if (centerPage) {
+						pox = (getSize().x - Math.round(zoomFactor * page.getWidth())) / 2;
+					}
+				} else {
+					if (centerPage) {
+						pox = offx;
+						poy = offy;
+					}
+				}
+				
+				final Rectangle2D r = page.image2PdfCoordinates(new java.awt.Rectangle(cx - pox, cy - poy, 1, 1));
 
 				Display.getDefault().asyncExec(new Runnable() {
-					
 					@Override
 					public void run() {
-						editor.reverseSearch(r.getX(), currentPage.getHeight() - r.getY());
+						currentPage = page;
+						editor.reverseSearch(r.getX(), page.getHeight() - r.getY());
 					}
 				});
 			}
@@ -178,6 +221,26 @@ public class PDFPageViewer extends Canvas implements PaintListener, IPreferenceC
 		prefs.addPreferenceChangeListener(this);
 		
 		highlightLinks = prefs.getBoolean(ToggleLinkHighlightHandler.PREF_LINKHIGHTLIGHT_ID, true);
+		centerPage = prefs.getBoolean(PreferenceConstants.PREF_CENTER_PAGE, true);
+		continuousMode = prefs.getBoolean(PreferenceConstants.PREF_CONTINUOUS_MODE, false);
+
+    	if (parent instanceof ScrolledComposite) {
+    		parent.addListener(SWT.Resize, new org.eclipse.swt.widgets.Listener() {
+				@Override
+				public void handleEvent(org.eclipse.swt.widgets.Event event) {
+					if (!isDisposed() && getPage() != null) {
+						if (continuousMode) {
+							updateCanvasSize(maxWidth, totalHeight);
+						} else {
+							int idealW = Math.round(zoomFactor * getPage().getWidth());
+							int idealH = Math.round(zoomFactor * getPage().getHeight());
+							updateCanvasSize(idealW, idealH);
+						}
+						redraw();
+					}
+				}
+			});
+    	}
     }
 
     
@@ -287,46 +350,29 @@ public class PDFPageViewer extends Canvas implements PaintListener, IPreferenceC
      * @param page the PDFPage to draw.
      */
     public void showPage(IPDFPage page) {
-    	// stop drawing the previous page
-/*    	if (currentPage != null && prevSize != null && currentPage.isFinished()) {
-    		currentPage.stop(prevSize.width, prevSize.height, null);
-    	}*/
-
-    	// set up the new page
     	currentPage = page;
-
-    	//Reset highlight
     	highlight = null;
 
-    	boolean resize = false;
-    	int newW = Math.round(zoomFactor*page.getWidth());
-    	int newH = Math.round(zoomFactor*page.getHeight());
-
-    	Point sz = getSize();
-
-    	if (sz.x == 0 || sz.y == 0) return;
-    	currentImage = page.getImage(newH, newW);
-
-    	newW = currentImage.getWidth(null);
-    	newH = currentImage.getHeight(null);
-    	if (sz.x != newW || sz.y != newH) {
-    		sz.x = newW;
-    		sz.y = newH;
-    		resize = true;
+     	if (continuousMode) {
+    		if (zoomFactor != lastZoomFactor) {
+    			clearImageCache();
+    			lastZoomFactor = zoomFactor;
+    		}
+    		calculateLayout();
+    		updateCanvasSize(maxWidth, totalHeight);
+    		ScrolledComposite sc = (ScrolledComposite) getParent();
+    		if (pageOffsets != null && pageOffsets.length >= page.getPageNumber()) {
+    			int py = pageOffsets[page.getPageNumber() - 1];
+    			sc.setOrigin(sc.getOrigin().x, py);
+    		}
+    	} else {
+    		clearImageCache();
+    		lastZoomFactor = zoomFactor;
+    		int newW = Math.round(zoomFactor*page.getWidth());
+    		int newH = Math.round(zoomFactor*page.getHeight());
+    		updateCanvasSize(newW, newH);
     	}
-
-
-    	//long time = System.currentTimeMillis();
-    	//if (swtImage != null) swtImage.dispose();
-    	//swtImage = new org.eclipse.swt.graphics.Image(display, convertToSWT((BufferedImage)currentImage));
-    	//System.out.println(System.currentTimeMillis() - time);
-    	
-    	if (resize) {
-    		//Resize triggers repaint
-    		setSize(currentImage.getWidth(null), currentImage.getHeight(null));
-    		//setSize(Math.round(zoomFactor*page.getWidth()), Math.round(zoomFactor*page.getHeight()));
-    		redraw();
-    	}
+    	redraw();
     }
 
     private Rectangle getRectangle(Rectangle2D r) {
@@ -334,10 +380,36 @@ public class PDFPageViewer extends Canvas implements PaintListener, IPreferenceC
     }
     
     public Rectangle2D convertPDF2ImageCoord(Rectangle2D r) {
+    	if (continuousMode) {
+    		Rectangle2D imgRect = currentPage.pdf2ImageCoordinates(r);
+    		if (pageOffsets != null && pageOffsets.length >= currentPage.getPageNumber()) {
+    			int py = pageOffsets[currentPage.getPageNumber() - 1];
+    			imgRect.setRect(imgRect.getX(), imgRect.getY() + py, imgRect.getWidth(), imgRect.getHeight());
+    		}
+    		return imgRect;
+    	}
     	return currentPage.pdf2ImageCoordinates(r);
     }
     
     public Rectangle2D convertImage2PDFCoord(Rectangle2D r) {
+    	if (continuousMode) {
+    		int y = (int) r.getY();
+    		int pageNr = 1;
+    		if (pageOffsets != null) {
+    			for (int i = 0; i < pageOffsets.length; i++) {
+    				int py = pageOffsets[i];
+    				int ph = pageHeights[i];
+    				if (y >= py && y <= py + ph) {
+    					pageNr = i + 1;
+    					break;
+    				}
+    			}
+    		}
+    		IPDFPage page = editor.getPDFFile().getPage(pageNr);
+    		int py = (pageOffsets != null && pageOffsets.length >= pageNr) ? pageOffsets[pageNr - 1] : 0;
+    		Rectangle2D localRect = new Rectangle2D.Double(r.getX(), r.getY() - py, r.getWidth(), r.getHeight());
+    		return page.image2PdfCoordinates(localRect);
+    	}
     	return currentPage.image2PdfCoordinates(r);
     }
     
@@ -365,52 +437,155 @@ public class PDFPageViewer extends Canvas implements PaintListener, IPreferenceC
     public void paintControl(PaintEvent event) {
     	GC g = event.gc;
         Point sz = getSize();
-        if (currentImage == null) {
-            g.setForeground(getBackground());
-            g.fillRectangle(event.x, event.y, event.width, event.height);
-            g.setForeground(display.getSystemColor(SWT.COLOR_BLACK));
-            g.drawString(Messages.PDFPageViewer_1, sz.x / 2 - 30, sz.y / 2);
+        
+        g.setBackground(getBackground());
+        g.fillRectangle(event.x, event.y, event.width, event.height);
+        
+        if (continuousMode) {
+        	IPDFFile f = editor.getPDFFile();
+        	if (f == null || pageOffsets == null || pageOffsets.length == 0) {
+                g.setForeground(display.getSystemColor(SWT.COLOR_BLACK));
+                g.drawString(Messages.PDFPageViewer_1, sz.x / 2 - 30, sz.y / 2);
+                return;
+        	}
+        	
+        	ScrolledComposite sc = (ScrolledComposite) getParent();
+        	int startY = sc.getOrigin().y;
+        	int viewportH = sc.getClientArea().height;
+        	int endY = startY + viewportH;
+        	
+        	int startPage = -1;
+        	int endPage = -1;
+        	int numPages = f.getNumPages();
+        	for (int i = 0; i < numPages; i++) {
+        		int py = pageOffsets[i];
+        		int ph = pageHeights[i];
+        		if (py <= endY && py + ph >= startY) {
+        			if (startPage == -1) startPage = i + 1;
+        			endPage = i + 1;
+        		}
+        	}
+        	
+        	if (startPage != -1) {
+        		pruneImageCache(startPage, endPage);
+        		
+        		for (int pageNr = startPage; pageNr <= endPage; pageNr++) {
+        			int i = pageNr - 1;
+        			int py = pageOffsets[i];
+        			int ph = pageHeights[i];
+        			
+        			org.eclipse.swt.graphics.Image swtImg = getPageImage(pageNr);
+        			if (swtImg != null) {
+        				Rectangle rect = swtImg.getBounds();
+        				
+        				int idealH = pageHeights[i];
+        				int idealW = Math.round(zoomFactor * f.getPage(pageNr).getWidth());
+        				
+        				int pox = 0;
+        				if (centerPage) {
+        					pox = (sz.x - idealW) / 2;
+        				}
+        				
+        				Rectangle pageBounds = new Rectangle(pox, py, idealW, idealH);
+        				Rectangle clipRect = new Rectangle(event.x, event.y, event.width, event.height);
+        				Rectangle intersection = clipRect.intersection(pageBounds);
+        				
+        				if (intersection.width > 0 && intersection.height > 0) {
+        					double scaleX = (double) rect.width / idealW;
+        					double scaleY = (double) rect.height / idealH;
+        					
+        					int srcX = (int) Math.round((intersection.x - pox) * scaleX);
+        					int srcY = (int) Math.round((intersection.y - py) * scaleY);
+        					int srcW = (int) Math.round(intersection.width * scaleX);
+        					int srcH = (int) Math.round(intersection.height * scaleY);
+        					
+        					g.drawImage(swtImg, srcX, srcY, srcW, srcH, 
+        							intersection.x, intersection.y, intersection.width, intersection.height);
+        				}
+        			} else {
+         				int pox = 0;
+         				if (centerPage) {
+         					pox = (sz.x - Math.round(zoomFactor * f.getPage(pageNr).getWidth())) / 2;
+         				}
+        				g.setForeground(display.getSystemColor(SWT.COLOR_GRAY));
+        				g.drawRectangle(pox, py, Math.round(zoomFactor * f.getPage(pageNr).getWidth()), ph);
+        				g.drawString("Loading page " + pageNr + "...", pox + 10, py + 10);
+        			}
+        		}
+        	}
         } else {
-            // draw the image
-            int imwid = currentImage.getWidth(null);
-            int imhgt = currentImage.getHeight(null);
-            
-            // draw it centered within the panel
-            offx = (sz.x - imwid) / 2;
-            offy = (sz.y - imhgt) / 2;
-
-            // Clear the background of the dirty area first
-            g.setBackground(getBackground());
-            g.fillRectangle(event.x, event.y, event.width, event.height);
-
-            // Compute intersection of the event clip rectangle and the image bounds
-            Rectangle imgBounds = new Rectangle(offx, offy, imwid, imhgt);
-            Rectangle clipRect = new Rectangle(event.x, event.y, event.width, event.height);
-            Rectangle intersection = clipRect.intersection(imgBounds);
-
-            if (intersection.width > 0 && intersection.height > 0) {
-            	Image temp = new BufferedImage(intersection.width, intersection.height, BufferedImage.TYPE_4BYTE_ABGR);
-            	int srcX = intersection.x - offx;
-            	int srcY = intersection.y - offy;
-            	temp.getGraphics().drawImage(currentImage, 0, 0, intersection.width, intersection.height, 
-            			srcX, srcY, srcX + intersection.width, srcY + intersection.height, null);
-            	org.eclipse.swt.graphics.Image swtImage = new org.eclipse.swt.graphics.Image(display, convertToSWT((BufferedImage)temp));
-            	g.drawImage(swtImage, intersection.x, intersection.y);
-            	swtImage.dispose();
+            if (currentPage == null) {
+                g.setForeground(display.getSystemColor(SWT.COLOR_BLACK));
+                g.drawString(Messages.PDFPageViewer_1, sz.x / 2 - 30, sz.y / 2);
+                return;
             }
-
-            if (highlightLinks) {
-                IPDFLinkAnnotation[] anno = currentPage.getAnnotations();
-                g.setForeground(display.getSystemColor(SWT.COLOR_RED));
-                for (IPDFLinkAnnotation a : anno) {
-                    Rectangle r = getRectangle(convertPDF2ImageCoord(a.getPosition()));
+            
+            int pageNr = currentPage.getPageNumber();
+            org.eclipse.swt.graphics.Image swtImg = getPageImage(pageNr);
+            
+            if (swtImg != null) {
+            	Rectangle rect = swtImg.getBounds();
+            	int imwid = rect.width;
+            	int imhgt = rect.height;
+            	
+            	int idealW = Math.round(zoomFactor * currentPage.getWidth());
+            	int idealH = Math.round(zoomFactor * currentPage.getHeight());
+            	
+                if (centerPage) {
+                	ScrolledComposite sc = (ScrolledComposite) getParent();
+                	Rectangle clientArea = sc.getClientArea();
+                	if (idealW <= clientArea.width) {
+                		offx = (sz.x - idealW) / 2;
+                	} else {
+                		offx = 0;
+                	}
+                	if (idealH <= clientArea.height) {
+                		offy = (sz.y - idealH) / 2;
+                	} else {
+                		offy = 0;
+                	}
+                } else {
+                    offx = 0;
+                    offy = 0;
+                }
+                
+                Rectangle imgBounds = new Rectangle(offx, offy, idealW, idealH);
+                Rectangle clipRect = new Rectangle(event.x, event.y, event.width, event.height);
+                Rectangle intersection = clipRect.intersection(imgBounds);
+ 
+                if (intersection.width > 0 && intersection.height > 0) {
+                	double scaleX = (double) imwid / idealW;
+                	double scaleY = (double) imhgt / idealH;
+                	
+                	int srcX = (int) Math.round((intersection.x - offx) * scaleX);
+                	int srcY = (int) Math.round((intersection.y - offy) * scaleY);
+                	int srcW = (int) Math.round(intersection.width * scaleX);
+                	int srcH = (int) Math.round(intersection.height * scaleY);
+                	
+                	g.drawImage(swtImg, srcX, srcY, srcW, srcH, 
+                			intersection.x, intersection.y, intersection.width, intersection.height);
+                }
+                
+                if (highlightLinks) {
+                    IPDFLinkAnnotation[] anno = currentPage.getAnnotations();
+                    g.setForeground(display.getSystemColor(SWT.COLOR_RED));
+                    for (IPDFLinkAnnotation a : anno) {
+                        Rectangle r = getRectangle(convertPDF2ImageCoord(a.getPosition()));
+                        r.x += offx;
+                        r.y += offy;
+                        g.drawRectangle(r);
+                    }
+                }
+                if (highlight != null) {
+                    g.setForeground(display.getSystemColor(SWT.COLOR_BLUE));
+                    Rectangle r = getRectangle(highlight);
+                    r.x += offx;
+                    r.y += offy;
                     g.drawRectangle(r);
                 }
-            }
-            //Draw highlight frame
-            if (highlight != null) {
-                g.setForeground(display.getSystemColor(SWT.COLOR_BLUE));
-                g.drawRectangle(getRectangle(highlight));
+            } else {
+            	g.setForeground(display.getSystemColor(SWT.COLOR_GRAY));
+            	g.drawString("Loading page " + pageNr + "...", sz.x / 2 - 50, sz.y / 2);
             }
         }
     }
@@ -420,9 +595,35 @@ public class PDFPageViewer extends Canvas implements PaintListener, IPreferenceC
     	if (ToggleLinkHighlightHandler.PREF_LINKHIGHTLIGHT_ID.equals(event.getKey())) {
     		highlightLinks = Boolean.parseBoolean((String)(event.getNewValue()));
     		redraw();
+    	} else if (PreferenceConstants.PREF_CENTER_PAGE.equals(event.getKey())) {
+    		centerPage = Boolean.parseBoolean((String)(event.getNewValue()));
+    		redraw();
+    	} else if (PreferenceConstants.PREF_CONTINUOUS_MODE.equals(event.getKey())) {
+    		continuousMode = Boolean.parseBoolean((String)(event.getNewValue()));
+    		Display.getDefault().asyncExec(new Runnable() {
+    			public void run() {
+    				if (!isDisposed() && getPage() != null) {
+    					clearImageCache();
+    					if (continuousMode) {
+    						lastZoomFactor = zoomFactor;
+    						calculateLayout();
+    						updateCanvasSize(maxWidth, totalHeight);
+    					} else {
+    						int newW = Math.round(zoomFactor * getPage().getWidth());
+    						int newH = Math.round(zoomFactor * getPage().getHeight());
+    						updateCanvasSize(newW, newH);
+    					}
+    					redraw();
+    				}
+    			}
+    		});
     	}
     }
     
+	public int[] getPageOffsets() { return pageOffsets; }
+	public int[] getPageHeights() { return pageHeights; }
+	public boolean isContinuousMode() { return continuousMode; }
+
     /**
      * Gets the page currently being displayed
      */
@@ -434,12 +635,205 @@ public class PDFPageViewer extends Canvas implements PaintListener, IPreferenceC
     public void dispose() {
     	super.dispose();
 
-		if (currentImage != null) {
-			currentImage.flush();
-			currentImage = null;
-		}
-    	
-    	IEclipsePreferences prefs = InstanceScope.INSTANCE.getNode(Activator.PLUGIN_ID);
-    	prefs.removePreferenceChangeListener(this);
+ 		if (currentImage != null) {
+ 			currentImage.flush();
+ 			currentImage = null;
+ 		}
+ 		clearImageCache();
+ 		
+ 		Composite parent = getParent();
+ 		if (parent != null && !parent.isDisposed() && parentResizeListener != null) {
+ 			parent.removeListener(SWT.Resize, parentResizeListener);
+ 		}
+     	
+     	IEclipsePreferences prefs = InstanceScope.INSTANCE.getNode(Activator.PLUGIN_ID);
+     	prefs.removePreferenceChangeListener(this);
     }
+
+	public void calculateLayout() {
+		IPDFFile f = editor.getPDFFile();
+		if (f == null) return;
+		int numPages = f.getNumPages();
+		pageHeights = new int[numPages];
+		pageOffsets = new int[numPages];
+		totalHeight = 0;
+		maxWidth = 0;
+		int spacing = Math.round(zoomFactor * 10);
+		for (int i = 0; i < numPages; i++) {
+			IPDFPage page = f.getPage(i + 1);
+			int h = Math.round(zoomFactor * page.getHeight());
+			int w = Math.round(zoomFactor * page.getWidth());
+			pageHeights[i] = h;
+			pageOffsets[i] = totalHeight;
+			totalHeight += h + spacing;
+			if (w > maxWidth) maxWidth = w;
+		}
+		if (numPages > 0) {
+			totalHeight -= spacing;
+		}
+	}
+	
+	public void updateLayout() {
+		calculateLayout();
+		updateCanvasSize(maxWidth, totalHeight);
+	}
+	
+	public void updateCanvasSize(int idealW, int idealH) {
+		Composite parent = getParent();
+		if (parent instanceof ScrolledComposite) {
+			Rectangle r = ((ScrolledComposite) parent).getClientArea();
+			int w = Math.max(r.width, idealW);
+			int h = Math.max(r.height, idealH);
+			Point cur = getSize();
+			if (cur.x != w || cur.y != h) {
+				setSize(w, h);
+			}
+		} else {
+			Point cur = getSize();
+			if (cur.x != idealW || cur.y != idealH) {
+				setSize(idealW, idealH);
+			}
+		}
+	}
+	
+	public void clearImageCache() {
+		for (org.eclipse.swt.graphics.Image img : pageImageCache.values()) {
+			if (img != null && !img.isDisposed()) {
+				img.dispose();
+			}
+		}
+		pageImageCache.clear();
+		renderingPages.clear();
+		retryCounts.clear();
+	}
+
+	private void pruneImageCache(int startPage, int endPage) {
+		java.util.List<Integer> keysToRemove = new java.util.ArrayList<>();
+		for (int key : pageImageCache.keySet()) {
+			if (key < startPage - 1 || key > endPage + 1) {
+				keysToRemove.add(key);
+			}
+		}
+		for (int key : keysToRemove) {
+			org.eclipse.swt.graphics.Image img = pageImageCache.remove(key);
+			if (img != null && !img.isDisposed()) {
+				img.dispose();
+			}
+		}
+	}
+
+	private java.util.Set<Integer> renderingPages = new java.util.HashSet<>();
+
+	private org.eclipse.swt.graphics.Image getPageImage(final int pageNr) {
+		org.eclipse.swt.graphics.Image img = pageImageCache.get(pageNr);
+		if (img != null && !img.isDisposed()) {
+			return img;
+		}
+		
+		if (renderingPages.contains(pageNr)) {
+			return null;
+		}
+		renderingPages.add(pageNr);
+		
+		final IPDFFile f = editor.getPDFFile();
+		if (f == null) return null;
+		
+		int calculatedW = Math.round(zoomFactor * f.getPage(pageNr).getWidth());
+		int calculatedH = Math.round(zoomFactor * f.getPage(pageNr).getHeight());
+		int retryCount = retryCounts.containsKey(pageNr) ? retryCounts.get(pageNr) : 0;
+		if (retryCount > 0) {
+			// Apply a small size jitter to bypass JPedal rendering bugs at specific resolutions.
+			// Alter size by +1, -2, +3 pixels based on retry attempt.
+			int offset = (retryCount % 2 == 1) ? retryCount : -retryCount;
+			calculatedW = Math.max(1, calculatedW + offset);
+			calculatedH = Math.max(1, calculatedH + offset);
+		}
+		final int w = calculatedW;
+		final int h = calculatedH;
+		final IPDFFile jobFile = f;
+		final float jobZoom = zoomFactor;
+		
+		org.eclipse.core.runtime.jobs.Job renderJob = new org.eclipse.core.runtime.jobs.Job("Render Page " + pageNr) {
+			@Override
+			protected org.eclipse.core.runtime.IStatus run(org.eclipse.core.runtime.IProgressMonitor monitor) {
+				if (editor.getPDFFile() != jobFile) {
+					return org.eclipse.core.runtime.Status.OK_STATUS;
+				}
+				try {
+					Image awtImg;
+					synchronized (jobFile) {
+						if (editor.getPDFFile() != jobFile) {
+							return org.eclipse.core.runtime.Status.OK_STATUS;
+						}
+						IPDFPage page = jobFile.getPage(pageNr);
+						awtImg = page.getImage(h, w);
+					}
+					final ImageData imgData = convertToSWT((BufferedImage) awtImg);
+					awtImg.flush();
+					
+					Display.getDefault().asyncExec(new Runnable() {
+						@Override
+						public void run() {
+							if (isDisposed()) {
+								return;
+							}
+							if (editor.getPDFFile() != jobFile) {
+								return;
+							}
+							if (zoomFactor != jobZoom) {
+								renderingPages.remove(pageNr);
+								return;
+							}
+							org.eclipse.swt.graphics.Image swtImg = new org.eclipse.swt.graphics.Image(display, imgData);
+							org.eclipse.swt.graphics.Image oldImg = pageImageCache.put(pageNr, swtImg);
+							if (oldImg != null && !oldImg.isDisposed()) {
+								oldImg.dispose();
+							}
+							renderingPages.remove(pageNr);
+							retryCounts.remove(pageNr);
+							
+							if (continuousMode && pageOffsets != null && pageOffsets.length >= pageNr) {
+								int py = pageOffsets[pageNr - 1];
+								int ph = pageHeights[pageNr - 1];
+								redraw(0, py, maxWidth, ph, false);
+							} else {
+								redraw();
+							}
+						}
+					});
+				} catch (final Exception e) {
+					Display.getDefault().asyncExec(new Runnable() {
+						@Override
+						public void run() {
+							if (isDisposed()) {
+								return;
+							}
+							if (editor.getPDFFile() != jobFile) {
+								return;
+							}
+							renderingPages.remove(pageNr);
+							Activator.log("Failed to render page " + pageNr, e);
+							
+							int count = retryCounts.containsKey(pageNr) ? retryCounts.get(pageNr) : 0;
+							if (count < 3) {
+								retryCounts.put(pageNr, count + 1);
+								Display.getDefault().timerExec(1000, new Runnable() {
+									@Override
+									public void run() {
+										if (!isDisposed()) {
+											redraw();
+										}
+									}
+								});
+							}
+						}
+					});
+				}
+				return org.eclipse.core.runtime.Status.OK_STATUS;
+			}
+		};
+		renderJob.setSystem(true);
+		renderJob.schedule();
+		return null;
+	}
 }

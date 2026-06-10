@@ -17,4 +17,6 @@ public class PreferenceConstants {
 
 	public static final String PSEUDO_CONTINUOUS_SCROLLING = "pseudoContinuousScrolling";	
 	public static final String PDF_RENDERER = "pdfRenderer";
+	public static final String PREF_CENTER_PAGE = "centerPage";
+	public static final String PREF_CONTINUOUS_MODE = "continuousMode";
 }
