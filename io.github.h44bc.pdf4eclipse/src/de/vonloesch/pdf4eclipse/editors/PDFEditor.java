@@ -225,9 +225,6 @@ public class PDFEditor extends EditorPart implements IResourceChangeListener,
 			final IFile currentfile = ((IFileEditorInput) getEditorInput()).getFile();
 			final IResourceDelta delta = event.getDelta().findMember(currentfile.getFullPath());
 			if (delta != null && (delta.getKind() & IResourceDelta.REMOVED) == 0) {
-				if (file.exists()) {
-					lastModifiedTime = file.lastModified();
-				}
 				triggerReloadJob();
 			}
 		}				
@@ -246,6 +243,12 @@ public class PDFEditor extends EditorPart implements IResourceChangeListener,
 		// Speed up scrolling when using a wheel mouse
 		ScrollBar vBar = sc.getVerticalBar();
 		vBar.setIncrement(10);
+		vBar.addSelectionListener(new org.eclipse.swt.events.SelectionAdapter() {
+			@Override
+			public void widgetSelected(org.eclipse.swt.events.SelectionEvent e) {
+				syncCurrentPageFromScroll();
+			}
+		});
 				
 		
 		isListeningForMouseWheel = false;
@@ -627,6 +630,10 @@ public class PDFEditor extends EditorPart implements IResourceChangeListener,
 
 	}
 
+	public IPDFFile getPDFFile() {
+		return f;
+	}
+
 	public void showPage(IPDFPage page) {
 		currentPage = page.getPageNumber();
 		pv.showPage(page);
@@ -775,7 +782,13 @@ public class PDFEditor extends EditorPart implements IResourceChangeListener,
 		sc.setRedraw(true);
 	}
 
+	private boolean isReloading = false;
+
 	private void triggerReloadJob() {
+		synchronized (this) {
+			if (isReloading) return;
+			isReloading = true;
+		}
 		Job reloadJob = new Job("Reloading PDF") {
 			@Override
 			protected IStatus run(IProgressMonitor monitor) {
@@ -786,59 +799,100 @@ public class PDFEditor extends EditorPart implements IResourceChangeListener,
 				IEclipsePreferences prefs = InstanceScope.INSTANCE.getNode(Activator.PLUGIN_ID);
 				int r = prefs.getInt(PreferenceConstants.PDF_RENDERER, PDFFactory.STRATEGY_SUN_JPEDAL);
 				
-				while (retries < maxRetries) {
-					if (monitor.isCanceled()) {
-						return Status.CANCEL_STATUS;
-					}
-					try {
-						newFile = PDFFactory.openPDFFile(file, r);
-						if (newFile != null) {
-							break;
-						}
-					} catch (Exception e) {
-						retries++;
-						if (retries >= maxRetries) {
-							Activator.log("Failed to reload PDF after " + maxRetries + " attempts.", e);
-							return Status.OK_STATUS;
-						}
-						try {
-							Thread.sleep(500);
-						} catch (InterruptedException ie) {
-							Thread.currentThread().interrupt();
+				try {
+					while (retries < maxRetries) {
+						if (monitor.isCanceled()) {
+							synchronized (PDFEditor.this) {
+								isReloading = false;
+							}
 							return Status.CANCEL_STATUS;
 						}
-					}
-				}
-				
-				if (newFile != null) {
-					final IPDFFile finalNewFile = newFile;
-					Display.getDefault().asyncExec(new Runnable() {
-						@Override
-						public void run() {
-							if (pv == null || pv.isDisposed()) {
-								finalNewFile.close();
-								return;
+						try {
+							newFile = PDFFactory.openPDFFile(file, r);
+							if (newFile != null) {
+								break;
 							}
-							
-							IPDFFile oldFile = f;
-							f = finalNewFile;
-							
+						} catch (Exception e) {
+							retries++;
+							if (retries >= maxRetries) {
+								Activator.log("Failed to reload PDF after " + maxRetries + " attempts.", e);
+								synchronized (PDFEditor.this) {
+									isReloading = false;
+								}
+								return Status.OK_STATUS;
+							}
 							try {
-								final IOutlineNode n = f.getOutline();
-								showPage(currentPage);
-								if (outline != null) {
-									outline.setInput(n);
+								Thread.sleep(500);
+							} catch (InterruptedException ie) {
+								Thread.currentThread().interrupt();
+								synchronized (PDFEditor.this) {
+									isReloading = false;
 								}
-								pv.redraw();
-							} catch (IOException e) {
-								Activator.log("Failed to update UI after PDF reload.", e);
-							} finally {
-								if (oldFile != null) {
-									oldFile.close();
-								}
+								return Status.CANCEL_STATUS;
 							}
 						}
-					});
+					}
+					
+					if (newFile != null) {
+						final IPDFFile finalNewFile = newFile;
+						Display.getDefault().asyncExec(new Runnable() {
+							@Override
+							public void run() {
+								try {
+									if (pv == null || pv.isDisposed()) {
+										finalNewFile.close();
+										return;
+									}
+									
+									IPDFFile oldFile = f;
+									f = finalNewFile;
+									
+									try {
+										final IOutlineNode n = f.getOutline();
+										if (pv != null) {
+											pv.clearImageCache();
+											if (pv.isContinuousMode()) {
+												pv.currentPage = f.getPage(currentPage);
+												pv.updateLayout();
+											} else {
+												showPage(currentPage);
+											}
+										} else {
+											showPage(currentPage);
+										}
+										if (outline != null) {
+											outline.setInput(n);
+										}
+										if (file.exists()) {
+											lastModifiedTime = file.lastModified();
+										}
+										if (pv != null) {
+											pv.redraw();
+										}
+									} catch (IOException e) {
+										Activator.log("Failed to update UI after PDF reload.", e);
+									} finally {
+										if (oldFile != null) {
+											oldFile.close();
+										}
+									}
+								} finally {
+									synchronized (PDFEditor.this) {
+										isReloading = false;
+									}
+								}
+							}
+						});
+					} else {
+						synchronized (PDFEditor.this) {
+							isReloading = false;
+						}
+					}
+				} catch (Throwable t) {
+					synchronized (PDFEditor.this) {
+						isReloading = false;
+					}
+					throw t;
 				}
 				return Status.OK_STATUS;
 			}
@@ -859,13 +913,39 @@ public class PDFEditor extends EditorPart implements IResourceChangeListener,
 				if (file.exists()) {
 					long newTime = file.lastModified();
 					if (newTime > lastModifiedTime) {
-						lastModifiedTime = newTime;
 						triggerReloadJob();
 					}
 				}
 				display.timerExec(2000, this);
 			}
 		});
+	}
+
+	private void syncCurrentPageFromScroll() {
+		if (pv == null || !pv.isContinuousMode()) return;
+		int[] offsets = pv.getPageOffsets();
+		int[] heights = pv.getPageHeights();
+		if (offsets == null || heights == null || f == null) return;
+		
+		int currentY = sc.getOrigin().y;
+		int viewportH = sc.getClientArea().height;
+		int centerY = currentY + viewportH / 2;
+		
+		int bestPage = 1;
+		for (int i = 0; i < offsets.length; i++) {
+			int py = offsets[i];
+			int ph = heights[i];
+			if (centerY >= py && centerY <= py + ph) {
+				bestPage = i + 1;
+				break;
+			}
+		}
+		
+		if (bestPage != currentPage) {
+			currentPage = bestPage;
+			updateStatusLine();
+			pv.currentPage = f.getPage(currentPage);
+		}
 	}
 
 }

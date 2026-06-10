@@ -31,6 +31,8 @@ public class PreferenceInitializer extends AbstractPreferenceInitializer {
 		IPreferenceStore store = Activator.getDefault().getPreferenceStore();
 		store.setDefault(PreferenceConstants.PSEUDO_CONTINUOUS_SCROLLING, true);
 		store.setDefault(PreferenceConstants.PDF_RENDERER, PDFFactory.STRATEGY_SUN_JPEDAL);
+		store.setDefault(PreferenceConstants.PREF_CENTER_PAGE, true);
+		store.setDefault(PreferenceConstants.PREF_CONTINUOUS_MODE, false);
 	}
 
 }

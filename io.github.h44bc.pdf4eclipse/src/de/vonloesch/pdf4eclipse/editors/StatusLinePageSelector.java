@@ -131,6 +131,7 @@ public class StatusLinePageSelector extends ContributionItem {
 		ToolBar bar1 = new ToolBar(c, SWT.FLAT);
 
 		firstPage = new ToolItem(bar1, SWT.FLAT);
+		if (imageFirst != null && !imageFirst.isDisposed()) imageFirst.dispose();
 		imageFirst = Activator.getImageDescriptor("icons/arrow-stop-180.png").createImage(); //$NON-NLS-1$
 		firstPage.setImage(imageFirst);
 		firstPage.setToolTipText(Messages.StatusLinePageSelector_ButtonFirst);
@@ -147,6 +148,7 @@ public class StatusLinePageSelector extends ContributionItem {
 		});
 
 		prevPage = new ToolItem(bar1, SWT.FLAT);
+		if (imagePrev != null && !imagePrev.isDisposed()) imagePrev.dispose();
 		imagePrev = Activator.getImageDescriptor("icons/arrow-180.png").createImage(); //$NON-NLS-1$
 		prevPage.setImage(imagePrev);
 		prevPage.setToolTipText(Messages.StatusLinePageSelector_ButtonPrevious);
@@ -175,6 +177,7 @@ public class StatusLinePageSelector extends ContributionItem {
 		pageNrField.setText(" / "+this.lastPageNr); //$NON-NLS-1$
 		
 		ToolBar bar2 = new ToolBar(c, SWT.FLAT);
+		if (imageNext != null && !imageNext.isDisposed()) imageNext.dispose();
 		imageNext = Activator.getImageDescriptor("icons/arrow.png").createImage(); //$NON-NLS-1$
 		nextPage = new ToolItem(bar2, SWT.FLAT);
 		nextPage.setImage(imageNext);
@@ -191,6 +194,7 @@ public class StatusLinePageSelector extends ContributionItem {
 			public void widgetDefaultSelected(SelectionEvent e) {}
 		});
 		
+		if (imageLast != null && !imageLast.isDisposed()) imageLast.dispose();
 		imageLast = Activator.getImageDescriptor("icons/arrow-stop.png").createImage(); //$NON-NLS-1$
 		lastPage = new ToolItem(bar2, SWT.FLAT);
 		lastPage.setImage(imageLast);
@@ -337,9 +341,9 @@ public class StatusLinePageSelector extends ContributionItem {
 	@Override
 	public void dispose() {
 		super.dispose();
-		imageFirst.dispose();
-		imageLast.dispose();
-		imageNext.dispose();
-		imagePrev.dispose();
+		if (imageFirst != null && !imageFirst.isDisposed()) imageFirst.dispose();
+		if (imageLast != null && !imageLast.isDisposed()) imageLast.dispose();
+		if (imageNext != null && !imageNext.isDisposed()) imageNext.dispose();
+		if (imagePrev != null && !imagePrev.isDisposed()) imagePrev.dispose();
 	}
 }
