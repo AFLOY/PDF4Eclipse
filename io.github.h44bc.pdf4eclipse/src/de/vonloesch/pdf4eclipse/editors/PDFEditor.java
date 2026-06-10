@@ -259,6 +259,8 @@ public class PDFEditor extends EditorPart implements IResourceChangeListener,
 			
 			@Override
 			public void handleEvent(Event e) {
+				if ((e.stateMask & SWT.CTRL) > 0) return;
+
 				long time = e.time & 0xFFFFFFFFL;
 				
 				//If a scrolling event occurs within a very short period of time
