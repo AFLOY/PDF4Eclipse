@@ -410,6 +410,12 @@ public class PDFPageViewer extends Canvas implements PaintListener, IPreferenceC
      */
     public void paintControl(PaintEvent event) {
     	GC g = event.gc;
+    	try {
+    		// Smooth scaling for preview images drawn at a stale zoom factor
+    		g.setInterpolation(SWT.HIGH);
+    	} catch (org.eclipse.swt.SWTException e) {
+    		// Advanced graphics not available; fall back to default scaling.
+    	}
         Point sz = getSize();
         
         g.setBackground(getBackground());
@@ -743,11 +749,14 @@ public class PDFPageViewer extends Canvas implements PaintListener, IPreferenceC
 			// Return old image as preview while rendering
 			return (img != null && !img.isDisposed()) ? img : null;
 		}
-		renderingPages.add(pageNr);
-		
+
 		final IPDFFile f = editor.getPDFFile();
-		if (f == null) return null;
-		
+		if (f == null) {
+			// No file (yet); keep showing the old image if we have one.
+			return (img != null && !img.isDisposed()) ? img : null;
+		}
+		renderingPages.add(pageNr);
+
 		int calculatedW = Math.round(zoomFactor * f.getPage(pageNr).getWidth());
 		int calculatedH = Math.round(zoomFactor * f.getPage(pageNr).getHeight());
 		int retryCount = retryCounts.containsKey(pageNr) ? retryCounts.get(pageNr) : 0;
@@ -791,10 +800,6 @@ public class PDFPageViewer extends Canvas implements PaintListener, IPreferenceC
 							if (editor.getPDFFile() != jobFile) {
 								return;
 							}
-							if (zoomFactor != jobZoom) {
-								renderingPages.remove(pageNr);
-								return;
-							}
 							org.eclipse.swt.graphics.Image swtImg = new org.eclipse.swt.graphics.Image(display, imgData);
 							org.eclipse.swt.graphics.Image oldImg = pageImageCache.put(pageNr, swtImg);
 							pageImageZoomCache.put(pageNr, jobZoom);
@@ -804,7 +809,16 @@ public class PDFPageViewer extends Canvas implements PaintListener, IPreferenceC
 							}
 							renderingPages.remove(pageNr);
 							retryCounts.remove(pageNr);
-							
+
+							if (zoomFactor != jobZoom) {
+								// Zoom changed while this render was in flight.
+								// Keep the result as an up-to-date preview and trigger
+								// a full repaint, which schedules a fresh render at
+								// the current zoom factor (renderingPages is now clear).
+								redraw();
+								return;
+							}
+
 							if (continuousMode && pageOffsets != null && pageOffsets.length >= pageNr) {
 								int py = pageOffsets[pageNr - 1];
 								int ph = pageHeights[pageNr - 1];
