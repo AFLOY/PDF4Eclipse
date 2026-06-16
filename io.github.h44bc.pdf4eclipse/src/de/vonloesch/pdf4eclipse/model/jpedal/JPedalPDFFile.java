@@ -28,6 +28,8 @@ public class JPedalPDFFile implements IPDFFile {
 	File input;
 	PdfDecoder decoder;
 	int pageNumbers;
+	float[] pageWidths;
+	float[] pageHeights;
 
 	public JPedalPDFFile(File f) throws IOException {
 		input = f;
@@ -55,6 +57,8 @@ public class JPedalPDFFile implements IPDFFile {
 		try {
 			decoder.openPdfFile(input.getAbsolutePath());
 			pageNumbers = decoder.getPageCount();
+			pageWidths = new float[pageNumbers + 1];
+			pageHeights = new float[pageNumbers + 1];
 		} catch (PdfException e) {
 			throw new IOException(e.getMessage());
 		}
@@ -73,5 +77,27 @@ public class JPedalPDFFile implements IPDFFile {
 	
 	public PdfDecoder getInternalDecoder() {
 		return decoder;
+	}
+
+	@Override
+	public float getPageWidth(int pageNr) {
+		if (pageNr < 1 || pageNr > pageNumbers) return 0;
+		if (pageWidths[pageNr] <= 0) {
+			IPDFPage page = getPage(pageNr);
+			pageWidths[pageNr] = page.getWidth();
+			pageHeights[pageNr] = page.getHeight();
+		}
+		return pageWidths[pageNr];
+	}
+
+	@Override
+	public float getPageHeight(int pageNr) {
+		if (pageNr < 1 || pageNr > pageNumbers) return 0;
+		if (pageHeights[pageNr] <= 0) {
+			IPDFPage page = getPage(pageNr);
+			pageWidths[pageNr] = page.getWidth();
+			pageHeights[pageNr] = page.getHeight();
+		}
+		return pageHeights[pageNr];
 	}
 }

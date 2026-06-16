@@ -410,29 +410,22 @@ public class PDFPageViewer extends Canvas implements PaintListener, IPreferenceC
      */
     public void paintControl(PaintEvent event) {
     	GC g = event.gc;
-    	try {
-    		// Smooth scaling for preview images drawn at a stale zoom factor
-    		g.setInterpolation(SWT.HIGH);
-    	} catch (org.eclipse.swt.SWTException e) {
-    		// Advanced graphics not available; fall back to default scaling.
-    	}
         Point sz = getSize();
         
-        g.setBackground(getBackground());
-        g.fillRectangle(event.x, event.y, event.width, event.height);
+        org.eclipse.swt.graphics.Region bgRegion = new org.eclipse.swt.graphics.Region(display);
+        bgRegion.add(event.x, event.y, event.width, event.height);
         
         if (continuousMode) {
         	IPDFFile f = editor.getPDFFile();
         	if (f == null || pageOffsets == null || pageOffsets.length == 0) {
                 g.setForeground(display.getSystemColor(SWT.COLOR_BLACK));
                 g.drawString(Messages.PDFPageViewer_1, sz.x / 2 - 30, sz.y / 2);
+                bgRegion.dispose();
                 return;
         	}
         	
-        	ScrolledComposite sc = (ScrolledComposite) getParent();
-        	int startY = sc.getOrigin().y;
-        	int viewportH = sc.getClientArea().height;
-        	int endY = startY + viewportH;
+        	int startY = event.y;
+        	int endY = event.y + event.height;
         	
         	int startPage = -1;
         	int endPage = -1;
@@ -456,7 +449,7 @@ public class PDFPageViewer extends Canvas implements PaintListener, IPreferenceC
         				Rectangle rect = swtImg.getBounds();
         				
         				int idealH = pageHeights[i];
-        				int idealW = Math.round(zoomFactor * f.getPage(pageNr).getWidth());
+        				int idealW = Math.round(zoomFactor * f.getPageWidth(pageNr));
         				
         				int pox = 0;
         				if (centerPage) {
@@ -476,24 +469,43 @@ public class PDFPageViewer extends Canvas implements PaintListener, IPreferenceC
         					int srcW = (int) Math.round(intersection.width * scaleX);
         					int srcH = (int) Math.round(intersection.height * scaleY);
         					
-        					g.drawImage(swtImg, srcX, srcY, srcW, srcH, 
-        							intersection.x, intersection.y, intersection.width, intersection.height);
+        					if (srcX < 0) { srcW += srcX; srcX = 0; }
+        					if (srcY < 0) { srcH += srcY; srcY = 0; }
+        					if (srcX + srcW > rect.width) srcW = rect.width - srcX;
+        					if (srcY + srcH > rect.height) srcH = rect.height - srcY;
+        					
+        					if (srcW > 0 && srcH > 0) {
+        						try {
+        							Float imgZoom = pageImageZoomCache.get(pageNr);
+        							if (imgZoom != null && imgZoom == zoomFactor) {
+        								g.setInterpolation(SWT.NONE);
+        							} else {
+        								g.setInterpolation(SWT.HIGH);
+        							}
+        						} catch (org.eclipse.swt.SWTException e) {
+        							// Advanced graphics not available; fall back to default scaling.
+        						}
+        						g.drawImage(swtImg, srcX, srcY, srcW, srcH, 
+        								intersection.x, intersection.y, intersection.width, intersection.height);
+        						bgRegion.subtract(intersection.x, intersection.y, intersection.width, intersection.height);
+        					}
         				}
         			} else {
          				int pox = 0;
          				if (centerPage) {
-         					pox = (sz.x - Math.round(zoomFactor * f.getPage(pageNr).getWidth())) / 2;
+         					pox = (sz.x - Math.round(zoomFactor * f.getPageWidth(pageNr))) / 2;
          				}
         				g.setForeground(display.getSystemColor(SWT.COLOR_GRAY));
-        				g.drawRectangle(pox, py, Math.round(zoomFactor * f.getPage(pageNr).getWidth()), ph);
+        				g.drawRectangle(pox, py, Math.round(zoomFactor * f.getPageWidth(pageNr)), ph);
         				g.drawString("Loading page " + pageNr + "...", pox + 10, py + 10);
-        			}
+         			}
         		}
         	}
         } else {
             if (currentPage == null) {
                 g.setForeground(display.getSystemColor(SWT.COLOR_BLACK));
                 g.drawString(Messages.PDFPageViewer_1, sz.x / 2 - 30, sz.y / 2);
+                bgRegion.dispose();
                 return;
             }
             
@@ -539,8 +551,26 @@ public class PDFPageViewer extends Canvas implements PaintListener, IPreferenceC
                 	int srcW = (int) Math.round(intersection.width * scaleX);
                 	int srcH = (int) Math.round(intersection.height * scaleY);
                 	
-                	g.drawImage(swtImg, srcX, srcY, srcW, srcH, 
-                			intersection.x, intersection.y, intersection.width, intersection.height);
+                	if (srcX < 0) { srcW += srcX; srcX = 0; }
+                	if (srcY < 0) { srcH += srcY; srcY = 0; }
+                	if (srcX + srcW > imwid) srcW = imwid - srcX;
+                	if (srcY + srcH > imhgt) srcH = imhgt - srcY;
+                	
+                	if (srcW > 0 && srcH > 0) {
+        				try {
+        					Float imgZoom = pageImageZoomCache.get(pageNr);
+        					if (imgZoom != null && imgZoom == zoomFactor) {
+        						g.setInterpolation(SWT.NONE);
+        					} else {
+        						g.setInterpolation(SWT.HIGH);
+        					}
+        				} catch (org.eclipse.swt.SWTException e) {
+        					// Advanced graphics not available; fall back to default scaling.
+        				}
+                		g.drawImage(swtImg, srcX, srcY, srcW, srcH, 
+                				intersection.x, intersection.y, intersection.width, intersection.height);
+                		bgRegion.subtract(intersection.x, intersection.y, intersection.width, intersection.height);
+                	}
                 }
                 
                 if (highlightLinks) {
@@ -566,6 +596,12 @@ public class PDFPageViewer extends Canvas implements PaintListener, IPreferenceC
             	g.drawString("Loading page " + pageNr + "...", sz.x / 2 - 50, sz.y / 2);
             }
         }
+        
+        g.setClipping(bgRegion);
+        g.setBackground(getBackground());
+        g.fillRectangle(event.x, event.y, event.width, event.height);
+        g.setClipping((org.eclipse.swt.graphics.Region) null);
+        bgRegion.dispose();
     }
 
     @Override
@@ -662,9 +698,8 @@ public class PDFPageViewer extends Canvas implements PaintListener, IPreferenceC
 		maxWidth = 0;
 		int spacing = Math.round(zoomFactor * 10);
 		for (int i = 0; i < numPages; i++) {
-			IPDFPage page = f.getPage(i + 1);
-			int h = Math.round(zoomFactor * page.getHeight());
-			int w = Math.round(zoomFactor * page.getWidth());
+			int h = Math.round(zoomFactor * f.getPageHeight(i + 1));
+			int w = Math.round(zoomFactor * f.getPageWidth(i + 1));
 			pageHeights[i] = h;
 			pageOffsets[i] = totalHeight;
 			totalHeight += h + spacing;
@@ -757,8 +792,8 @@ public class PDFPageViewer extends Canvas implements PaintListener, IPreferenceC
 		}
 		renderingPages.add(pageNr);
 
-		int calculatedW = Math.round(zoomFactor * f.getPage(pageNr).getWidth());
-		int calculatedH = Math.round(zoomFactor * f.getPage(pageNr).getHeight());
+		int calculatedW = Math.round(zoomFactor * f.getPageWidth(pageNr));
+		int calculatedH = Math.round(zoomFactor * f.getPageHeight(pageNr));
 		int retryCount = retryCounts.containsKey(pageNr) ? retryCounts.get(pageNr) : 0;
 		if (retryCount > 0) {
 			// Apply a small size jitter to bypass JPedal rendering bugs at specific resolutions.

@@ -773,15 +773,11 @@ public class PDFEditor extends EditorPart implements IResourceChangeListener,
 	}
 
 	private void setOrigin(int x, int y) {
-		sc.setRedraw(false);
 		sc.setOrigin(x, y);
-		sc.setRedraw(true);
 	}
 
 	void setOrigin(Point p) {
-		sc.setRedraw(false);
 		if (p != null) sc.setOrigin(p);
-		sc.setRedraw(true);
 	}
 
 	private boolean isReloading = false;
