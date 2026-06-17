@@ -412,8 +412,11 @@ public class PDFPageViewer extends Canvas implements PaintListener, IPreferenceC
     	GC g = event.gc;
         Point sz = getSize();
         
+        org.eclipse.swt.graphics.Region originalClipping = new org.eclipse.swt.graphics.Region(display);
+        g.getClipping(originalClipping);
+        
         org.eclipse.swt.graphics.Region bgRegion = new org.eclipse.swt.graphics.Region(display);
-        bgRegion.add(event.x, event.y, event.width, event.height);
+        g.getClipping(bgRegion);
         
         if (continuousMode) {
         	IPDFFile f = editor.getPDFFile();
@@ -421,6 +424,7 @@ public class PDFPageViewer extends Canvas implements PaintListener, IPreferenceC
                 g.setForeground(display.getSystemColor(SWT.COLOR_BLACK));
                 g.drawString(Messages.PDFPageViewer_1, sz.x / 2 - 30, sz.y / 2);
                 bgRegion.dispose();
+                originalClipping.dispose();
                 return;
         	}
         	
@@ -506,6 +510,7 @@ public class PDFPageViewer extends Canvas implements PaintListener, IPreferenceC
                 g.setForeground(display.getSystemColor(SWT.COLOR_BLACK));
                 g.drawString(Messages.PDFPageViewer_1, sz.x / 2 - 30, sz.y / 2);
                 bgRegion.dispose();
+                originalClipping.dispose();
                 return;
             }
             
@@ -600,7 +605,8 @@ public class PDFPageViewer extends Canvas implements PaintListener, IPreferenceC
         g.setClipping(bgRegion);
         g.setBackground(getBackground());
         g.fillRectangle(event.x, event.y, event.width, event.height);
-        g.setClipping((org.eclipse.swt.graphics.Region) null);
+        g.setClipping(originalClipping);
+        originalClipping.dispose();
         bgRegion.dispose();
     }
 
