@@ -240,15 +240,36 @@ public class PDFPageViewer extends Canvas implements PaintListener, IPreferenceC
      */
     public static ImageData convertToSWT(BufferedImage bufferedImage) {
         if (bufferedImage.getType() == BufferedImage.TYPE_4BYTE_ABGR) {
-        	byte[] datas =
-        			((DataBufferByte) bufferedImage.getRaster()
-        				.getDataBuffer())
-        				.getData();
-        	ImageData data = new ImageData(bufferedImage.getWidth(),
-                    bufferedImage.getHeight(), 32,
+            java.awt.image.SampleModel sm = bufferedImage.getSampleModel();
+            if (sm instanceof java.awt.image.ComponentSampleModel) {
+                java.awt.image.ComponentSampleModel sampleModel = (java.awt.image.ComponentSampleModel) sm;
+                int scanlineStride = sampleModel.getScanlineStride();
+                int pixelStride = sampleModel.getPixelStride();
+                int width = bufferedImage.getWidth();
+                
+                if (scanlineStride == width * pixelStride) {
+                	byte[] datas =
+                			((DataBufferByte) bufferedImage.getRaster()
+                				.getDataBuffer())
+                				.getData();
+                	ImageData data = new ImageData(width,
+                            bufferedImage.getHeight(), 32,
+                            new PaletteData(0x000000FF, 0x0000FF00, 0x00FF0000));
+                	data.data = datas;
+                	return data;
+                }
+            }
+            // Safe fallback when scanlineStride does not match width * pixelStride (e.g. sub-images)
+            int width = bufferedImage.getWidth();
+            int height = bufferedImage.getHeight();
+            ImageData data = new ImageData(width, height, 32,
                     new PaletteData(0x000000FF, 0x0000FF00, 0x00FF0000));
-        	data.data = datas;
-        	return data;
+            int[] rgbs = new int[width];
+            for (int y = 0; y < height; y++) {
+                bufferedImage.getRGB(0, y, width, 1, rgbs, 0, width);
+                data.setPixels(0, y, width, rgbs, 0);
+            }
+            return data;
         }
 
     	if (bufferedImage.getColorModel() instanceof DirectColorModel) {
