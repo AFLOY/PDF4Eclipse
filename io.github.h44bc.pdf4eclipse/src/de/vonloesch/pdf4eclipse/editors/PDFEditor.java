@@ -577,7 +577,7 @@ public class PDFEditor extends EditorPart implements IResourceChangeListener,
 		}
 	}
 
-	public void reverseSearch(double pdfX, double pdfY) {
+	public void reverseSearch(int pageNr, double pdfX, double pdfY) {
 		File f = getSyncTeXFile();
 		if (f == null) {
 			writeStatusLineError(Messages.PDFEditor_SynctexMsg1);
@@ -587,7 +587,7 @@ public class PDFEditor extends EditorPart implements IResourceChangeListener,
 		try {
 			//FIXME: Create a job for this
 			SimpleSynctexParser p = createSimpleSynctexParser(f);
-			p.setReverseSearchInformation(currentPage, pdfX, pdfY);
+			p.setReverseSearchInformation(pageNr, pdfX, pdfY);
 			p.startReverse();
 			p.close();
 
