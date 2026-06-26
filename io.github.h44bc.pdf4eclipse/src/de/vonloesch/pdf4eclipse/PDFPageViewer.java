@@ -56,6 +56,10 @@ import de.vonloesch.pdf4eclipse.preferences.PreferenceConstants;
  *
  */
 public class PDFPageViewer extends Canvas implements PaintListener, IPreferenceChangeListener{
+	private static final int REDRAW_FRAME_MS = 16;
+	private static final int CACHE_PAGE_MARGIN = 3;
+	private static final int RENDER_PAGE_MARGIN = 1;
+
     /** The image of the rendered PDF page being displayed */
     private Image currentImage;
     
@@ -89,7 +93,12 @@ public class PDFPageViewer extends Canvas implements PaintListener, IPreferenceC
     private java.util.Map<Integer, IPDFPage> renderedPageCache = new java.util.HashMap<>();
     private java.util.Map<Integer, Integer> retryCounts = new java.util.HashMap<>();
     private org.eclipse.swt.widgets.Listener parentResizeListener;
+    private org.eclipse.swt.events.SelectionListener parentScrollListener;
+    private boolean visibleRedrawScheduled;
+    private long lastRedrawTime = 0;
     private float lastZoomFactor = -1f;
+    private volatile int visibleStartPage = 1;
+    private volatile int visibleEndPage = 1;
     
     //private org.eclipse.swt.graphics.Image swtImage;
 
@@ -211,7 +220,7 @@ public class PDFPageViewer extends Canvas implements PaintListener, IPreferenceC
 		continuousMode = prefs.getBoolean(PreferenceConstants.PREF_CONTINUOUS_MODE, false);
 
     	if (parent instanceof ScrolledComposite) {
-    		parent.addListener(SWT.Resize, new org.eclipse.swt.widgets.Listener() {
+    		parentResizeListener = new org.eclipse.swt.widgets.Listener() {
 				@Override
 				public void handleEvent(org.eclipse.swt.widgets.Event event) {
 					if (!isDisposed() && getPage() != null) {
@@ -225,7 +234,22 @@ public class PDFPageViewer extends Canvas implements PaintListener, IPreferenceC
 						redraw();
 					}
 				}
-			});
+			};
+    		parent.addListener(SWT.Resize, parentResizeListener);
+
+    		parentScrollListener = new org.eclipse.swt.events.SelectionAdapter() {
+    			@Override
+    			public void widgetSelected(org.eclipse.swt.events.SelectionEvent e) {
+    				redrawVisibleArea();
+    			}
+    		};
+    		ScrolledComposite sc = (ScrolledComposite) parent;
+    		if (sc.getHorizontalBar() != null) {
+    			sc.getHorizontalBar().addSelectionListener(parentScrollListener);
+    		}
+    		if (sc.getVerticalBar() != null) {
+    			sc.getVerticalBar().addSelectionListener(parentScrollListener);
+    		}
     	}
     }
 
@@ -436,15 +460,14 @@ public class PDFPageViewer extends Canvas implements PaintListener, IPreferenceC
         org.eclipse.swt.graphics.Region originalClipping = new org.eclipse.swt.graphics.Region(display);
         g.getClipping(originalClipping);
         
-        org.eclipse.swt.graphics.Region bgRegion = new org.eclipse.swt.graphics.Region(display);
-        g.getClipping(bgRegion);
+        g.setBackground(getBackground());
+        g.fillRectangle(event.x, event.y, event.width, event.height);
         
         if (continuousMode) {
         	IPDFFile f = editor.getPDFFile();
         	if (f == null || pageOffsets == null || pageOffsets.length == 0) {
                 g.setForeground(display.getSystemColor(SWT.COLOR_BLACK));
                 g.drawString(Messages.PDFPageViewer_1, sz.x / 2 - 30, sz.y / 2);
-                bgRegion.dispose();
                 originalClipping.dispose();
                 return;
         	}
@@ -459,6 +482,7 @@ public class PDFPageViewer extends Canvas implements PaintListener, IPreferenceC
         		startPage = getPageNumberForY(startY);
         		endPage = getPageNumberForY(endY);
         		if (endPage < startPage) endPage = startPage;
+        		updateVisiblePageRange(startPage, endPage);
         	}
         	
         	if (startPage != -1) {
@@ -486,51 +510,24 @@ public class PDFPageViewer extends Canvas implements PaintListener, IPreferenceC
         				Rectangle intersection = clipRect.intersection(pageBounds);
         				
         				if (intersection.width > 0 && intersection.height > 0) {
-        					double scaleX = (double) rect.width / idealW;
-        					double scaleY = (double) rect.height / idealH;
-        					
-        					int srcX = (int) Math.round((intersection.x - pox) * scaleX);
-        					int srcY = (int) Math.round((intersection.y - py) * scaleY);
-        					int srcW = (int) Math.round(intersection.width * scaleX);
-        					int srcH = (int) Math.round(intersection.height * scaleY);
-        					
-        					if (srcX < 0) { srcW += srcX; srcX = 0; }
-        					if (srcY < 0) { srcH += srcY; srcY = 0; }
-        					if (srcX + srcW > rect.width) srcW = rect.width - srcX;
-        					if (srcY + srcH > rect.height) srcH = rect.height - srcY;
-        					
-        					if (srcW > 0 && srcH > 0) {
-        						try {
-        							Float imgZoom = pageImageZoomCache.get(pageNr);
-        							if (imgZoom != null && imgZoom == zoomFactor) {
-        								g.setInterpolation(SWT.NONE);
-        							} else {
-        								g.setInterpolation(SWT.HIGH);
-        							}
-        						} catch (org.eclipse.swt.SWTException e) {
-        							// Advanced graphics not available; fall back to default scaling.
-        						}
-        						g.drawImage(swtImg, srcX, srcY, srcW, srcH, 
-        								intersection.x, intersection.y, intersection.width, intersection.height);
-        						bgRegion.subtract(intersection.x, intersection.y, intersection.width, intersection.height);
-        					}
+        					drawPageImage(g, swtImg, rect, pageBounds, intersection, originalClipping, pageNr);
         				}
         			} else {
-         				int pox = 0;
-         				if (centerPage) {
-         					pox = (sz.x - Math.round(zoomFactor * f.getPageWidth(pageNr))) / 2;
-         				}
+          				int pox = 0;
+          				if (centerPage) {
+          					pox = (sz.x - Math.round(zoomFactor * f.getPageWidth(pageNr))) / 2;
+          				}
         				g.setForeground(display.getSystemColor(SWT.COLOR_GRAY));
         				g.drawRectangle(pox, py, Math.round(zoomFactor * f.getPageWidth(pageNr)), ph);
         				g.drawString("Loading page " + pageNr + "...", pox + 10, py + 10);
-         			}
-        		}
-        	}
-        } else {
+          			}
+	        		}
+	        		prefetchAdjacentPages(startPage, endPage);
+	        	}
+	        } else {
             if (currentPage == null) {
                 g.setForeground(display.getSystemColor(SWT.COLOR_BLACK));
                 g.drawString(Messages.PDFPageViewer_1, sz.x / 2 - 30, sz.y / 2);
-                bgRegion.dispose();
                 originalClipping.dispose();
                 return;
             }
@@ -540,8 +537,6 @@ public class PDFPageViewer extends Canvas implements PaintListener, IPreferenceC
             
             if (swtImg != null) {
             	Rectangle rect = swtImg.getBounds();
-            	int imwid = rect.width;
-            	int imhgt = rect.height;
             	
             	int idealW = Math.round(zoomFactor * currentPage.getWidth());
             	int idealH = Math.round(zoomFactor * currentPage.getHeight());
@@ -569,34 +564,7 @@ public class PDFPageViewer extends Canvas implements PaintListener, IPreferenceC
                 Rectangle intersection = clipRect.intersection(imgBounds);
  
                 if (intersection.width > 0 && intersection.height > 0) {
-                	double scaleX = (double) imwid / idealW;
-                	double scaleY = (double) imhgt / idealH;
-                	
-                	int srcX = (int) Math.round((intersection.x - offx) * scaleX);
-                	int srcY = (int) Math.round((intersection.y - offy) * scaleY);
-                	int srcW = (int) Math.round(intersection.width * scaleX);
-                	int srcH = (int) Math.round(intersection.height * scaleY);
-                	
-                	if (srcX < 0) { srcW += srcX; srcX = 0; }
-                	if (srcY < 0) { srcH += srcY; srcY = 0; }
-                	if (srcX + srcW > imwid) srcW = imwid - srcX;
-                	if (srcY + srcH > imhgt) srcH = imhgt - srcY;
-                	
-                	if (srcW > 0 && srcH > 0) {
-        				try {
-        					Float imgZoom = pageImageZoomCache.get(pageNr);
-        					if (imgZoom != null && imgZoom == zoomFactor) {
-        						g.setInterpolation(SWT.NONE);
-        					} else {
-        						g.setInterpolation(SWT.HIGH);
-        					}
-        				} catch (org.eclipse.swt.SWTException e) {
-        					// Advanced graphics not available; fall back to default scaling.
-        				}
-                		g.drawImage(swtImg, srcX, srcY, srcW, srcH, 
-                				intersection.x, intersection.y, intersection.width, intersection.height);
-                		bgRegion.subtract(intersection.x, intersection.y, intersection.width, intersection.height);
-                	}
+                	drawPageImage(g, swtImg, rect, imgBounds, intersection, originalClipping, pageNr);
                 }
                 
                 if (highlightLinks) {
@@ -622,13 +590,52 @@ public class PDFPageViewer extends Canvas implements PaintListener, IPreferenceC
             	g.drawString("Loading page " + pageNr + "...", sz.x / 2 - 50, sz.y / 2);
             }
         }
-        
-        g.setClipping(bgRegion);
-        g.setBackground(getBackground());
-        g.fillRectangle(event.x, event.y, event.width, event.height);
         g.setClipping(originalClipping);
         originalClipping.dispose();
-        bgRegion.dispose();
+    }
+
+    private void drawPageImage(GC g, org.eclipse.swt.graphics.Image swtImg, Rectangle srcBounds,
+    		Rectangle dstBounds, Rectangle paintBounds, org.eclipse.swt.graphics.Region originalClipping, int pageNr) {
+    	org.eclipse.swt.graphics.Region paintRegion = new org.eclipse.swt.graphics.Region(display);
+    	paintRegion.add(paintBounds);
+    	paintRegion.intersect(originalClipping);
+    	try {
+    		g.setClipping(paintRegion);
+    		try {
+    			Float imgZoom = pageImageZoomCache.get(pageNr);
+    			if (imgZoom != null && imgZoom == zoomFactor) {
+    				g.setInterpolation(SWT.NONE);
+    			} else {
+    				g.setInterpolation(SWT.HIGH);
+    			}
+    		} catch (org.eclipse.swt.SWTException e) {
+    			// Advanced graphics not available; fall back to default scaling.
+    		}
+    		if (srcBounds.width == dstBounds.width && srcBounds.height == dstBounds.height) {
+    			g.drawImage(swtImg, dstBounds.x, dstBounds.y);
+    		} else {
+    			double scaleX = (double) srcBounds.width / dstBounds.width;
+    			double scaleY = (double) srcBounds.height / dstBounds.height;
+    			
+    			int srcX = (int) Math.round((paintBounds.x - dstBounds.x) * scaleX);
+    			int srcY = (int) Math.round((paintBounds.y - dstBounds.y) * scaleY);
+    			int srcW = (int) Math.round(paintBounds.width * scaleX);
+    			int srcH = (int) Math.round(paintBounds.height * scaleY);
+    			
+    			if (srcX < 0) { srcW += srcX; srcX = 0; }
+    			if (srcY < 0) { srcH += srcY; srcY = 0; }
+    			if (srcX + srcW > srcBounds.width) srcW = srcBounds.width - srcX;
+    			if (srcY + srcH > srcBounds.height) srcH = srcBounds.height - srcY;
+    			
+    			if (srcW > 0 && srcH > 0) {
+    				g.drawImage(swtImg, srcX, srcY, srcW, srcH,
+    						paintBounds.x, paintBounds.y, paintBounds.width, paintBounds.height);
+    			}
+    		}
+    	} finally {
+    		g.setClipping(originalClipping);
+    		paintRegion.dispose();
+    	}
     }
 
     @Override
@@ -668,7 +675,7 @@ public class PDFPageViewer extends Canvas implements PaintListener, IPreferenceC
      * Finds the corresponding page number (1-based) for a given Y coordinate in continuous mode.
      * Uses binary search for O(log N) lookup.
      */
-    private int getPageNumberForY(int y) {
+    public int getPageNumberForY(int y) {
         if (pageOffsets == null || pageHeights == null) return 1;
         int low = 0;
         int high = pageOffsets.length - 1;
@@ -689,6 +696,14 @@ public class PDFPageViewer extends Canvas implements PaintListener, IPreferenceC
         return Math.max(1, Math.min(low + 1, pageOffsets.length));
     }
 
+	private void updateVisiblePageRange(int startPage, int endPage) {
+		if (pageOffsets == null || pageOffsets.length == 0) return;
+		int clampedStart = Math.max(1, Math.min(startPage, pageOffsets.length));
+		int clampedEnd = Math.max(clampedStart, Math.min(endPage, pageOffsets.length));
+		visibleStartPage = clampedStart;
+		visibleEndPage = clampedEnd;
+	}
+
     /**
      * Gets the page currently being displayed
      */
@@ -698,22 +713,69 @@ public class PDFPageViewer extends Canvas implements PaintListener, IPreferenceC
 
     @Override
     public void dispose() {
+ 		Composite parent = getParent();
+ 		if (parent != null && !parent.isDisposed() && parentResizeListener != null) {
+ 			parent.removeListener(SWT.Resize, parentResizeListener);
+ 		}
+ 		if (parent instanceof ScrolledComposite && !parent.isDisposed() && parentScrollListener != null) {
+ 			ScrolledComposite sc = (ScrolledComposite) parent;
+ 			if (sc.getHorizontalBar() != null && !sc.getHorizontalBar().isDisposed()) {
+ 				sc.getHorizontalBar().removeSelectionListener(parentScrollListener);
+ 			}
+ 			if (sc.getVerticalBar() != null && !sc.getVerticalBar().isDisposed()) {
+ 				sc.getVerticalBar().removeSelectionListener(parentScrollListener);
+ 			}
+ 		}
+    	
     	super.dispose();
-
+    	
  		if (currentImage != null) {
  			currentImage.flush();
  			currentImage = null;
  		}
  		clearImageCache();
- 		
- 		Composite parent = getParent();
- 		if (parent != null && !parent.isDisposed() && parentResizeListener != null) {
- 			parent.removeListener(SWT.Resize, parentResizeListener);
- 		}
      	
      	IEclipsePreferences prefs = InstanceScope.INSTANCE.getNode(Activator.PLUGIN_ID);
      	prefs.removePreferenceChangeListener(this);
     }
+
+	public void redrawVisibleArea() {
+		if (isDisposed()) return;
+		long now = System.currentTimeMillis();
+		int delay = 0;
+		long elapsed = now - lastRedrawTime;
+		if (elapsed < REDRAW_FRAME_MS) {
+			delay = (int) (REDRAW_FRAME_MS - elapsed);
+		}
+		if (visibleRedrawScheduled) return;
+		visibleRedrawScheduled = true;
+		display.timerExec(delay, new Runnable() {
+			@Override
+			public void run() {
+				visibleRedrawScheduled = false;
+				if (isDisposed()) return;
+				redrawVisibleAreaNow();
+				lastRedrawTime = System.currentTimeMillis();
+			}
+		});
+	}
+	
+	private void redrawVisibleAreaNow() {
+		if (isDisposed()) return;
+		Composite parent = getParent();
+		if (!(parent instanceof ScrolledComposite) || parent.isDisposed()) {
+			redraw();
+			return;
+		}
+		ScrolledComposite sc = (ScrolledComposite) parent;
+		if (sc.isDisposed()) return;
+		Point origin = sc.getOrigin();
+		Rectangle clientArea = sc.getClientArea();
+		if (continuousMode && pageOffsets != null && pageOffsets.length > 0) {
+			updateVisiblePageRange(getPageNumberForY(origin.y), getPageNumberForY(origin.y + clientArea.height));
+		}
+		redraw(origin.x, origin.y, clientArea.width, clientArea.height, false);
+	}
 
 	public void calculateLayout() {
 		IPDFFile f = editor.getPDFFile();
@@ -774,9 +836,11 @@ public class PDFPageViewer extends Canvas implements PaintListener, IPreferenceC
 	}
 
 	private void pruneImageCache(int startPage, int endPage) {
+		int keepStart = Math.max(1, startPage - CACHE_PAGE_MARGIN);
+		int keepEnd = endPage + CACHE_PAGE_MARGIN;
 		java.util.List<Integer> keysToRemove = new java.util.ArrayList<>();
 		for (int key : pageImageCache.keySet()) {
-			if (key < startPage - 1 || key > endPage + 1) {
+			if (key < keepStart || key > keepEnd) {
 				keysToRemove.add(key);
 			}
 		}
@@ -788,6 +852,42 @@ public class PDFPageViewer extends Canvas implements PaintListener, IPreferenceC
 				img.dispose();
 			}
 		}
+	}
+
+	private void prefetchAdjacentPages(int startPage, int endPage) {
+		IPDFFile f = editor.getPDFFile();
+		if (f == null) return;
+		int firstPage = Math.max(1, startPage - RENDER_PAGE_MARGIN);
+		int lastPage = Math.min(f.getNumPages(), endPage + RENDER_PAGE_MARGIN);
+		for (int pageNr = firstPage; pageNr <= lastPage; pageNr++) {
+			if (pageNr < startPage || pageNr > endPage) {
+				getPageImage(pageNr);
+			}
+		}
+	}
+
+	private boolean shouldRenderPage(int pageNr, IPDFFile jobFile) {
+		if (editor.getPDFFile() != jobFile) return false;
+		if (!continuousMode) {
+			return currentPage != null && currentPage.getPageNumber() == pageNr;
+		}
+		int start = Math.max(1, visibleStartPage - RENDER_PAGE_MARGIN);
+		int end = visibleEndPage + RENDER_PAGE_MARGIN;
+		return pageNr >= start && pageNr <= end;
+	}
+
+	private void removeRenderingPageAsync(final int pageNr, final IPDFFile jobFile) {
+		Display.getDefault().asyncExec(new Runnable() {
+			@Override
+			public void run() {
+				if (!isDisposed()) {
+					renderingPages.remove(pageNr);
+					if (shouldRenderPage(pageNr, jobFile)) {
+						redrawVisibleArea();
+					}
+				}
+			}
+		});
 	}
 
 	private java.util.Set<Integer> renderingPages = new java.util.HashSet<>();
@@ -835,31 +935,50 @@ public class PDFPageViewer extends Canvas implements PaintListener, IPreferenceC
 		final float jobZoom = zoomFactor;
 		
 		org.eclipse.core.runtime.jobs.Job renderJob = new org.eclipse.core.runtime.jobs.Job("Render Page " + pageNr) {
-			@Override
-			protected org.eclipse.core.runtime.IStatus run(org.eclipse.core.runtime.IProgressMonitor monitor) {
-				if (editor.getPDFFile() != jobFile) {
-					return org.eclipse.core.runtime.Status.OK_STATUS;
-				}
-				try {
-					Image awtImg;
-					final IPDFPage[] renderedPage = new IPDFPage[1];
-					synchronized (jobFile) {
-						if (editor.getPDFFile() != jobFile) {
+				@Override
+				protected org.eclipse.core.runtime.IStatus run(org.eclipse.core.runtime.IProgressMonitor monitor) {
+					if (editor.getPDFFile() != jobFile) {
+						return org.eclipse.core.runtime.Status.OK_STATUS;
+					}
+					if (!shouldRenderPage(pageNr, jobFile)) {
+						removeRenderingPageAsync(pageNr, jobFile);
+						return org.eclipse.core.runtime.Status.OK_STATUS;
+					}
+					try {
+						Image awtImg;
+						final IPDFPage[] renderedPage = new IPDFPage[1];
+						synchronized (jobFile) {
+							if (editor.getPDFFile() != jobFile) {
+								return org.eclipse.core.runtime.Status.OK_STATUS;
+							}
+							if (!shouldRenderPage(pageNr, jobFile)) {
+								removeRenderingPageAsync(pageNr, jobFile);
+								return org.eclipse.core.runtime.Status.OK_STATUS;
+							}
+							renderedPage[0] = jobFile.getPage(pageNr);
+							awtImg = renderedPage[0].getImage(h, w);
+						}
+						if (!shouldRenderPage(pageNr, jobFile)) {
+							if (awtImg != null) {
+								awtImg.flush();
+							}
+							removeRenderingPageAsync(pageNr, jobFile);
 							return org.eclipse.core.runtime.Status.OK_STATUS;
 						}
-						renderedPage[0] = jobFile.getPage(pageNr);
-						awtImg = renderedPage[0].getImage(h, w);
-					}
-					final ImageData imgData = convertToSWT((BufferedImage) awtImg);
-					awtImg.flush();
-					
-					Display.getDefault().asyncExec(new Runnable() {
-						@Override
-						public void run() {
+						final ImageData imgData = convertToSWT((BufferedImage) awtImg);
+						awtImg.flush();
+
+						Display.getDefault().asyncExec(new Runnable() {
+							@Override
+							public void run() {
 							if (isDisposed()) {
 								return;
 							}
 							if (editor.getPDFFile() != jobFile) {
+								return;
+							}
+							if (!shouldRenderPage(pageNr, jobFile)) {
+								renderingPages.remove(pageNr);
 								return;
 							}
 							org.eclipse.swt.graphics.Image swtImg = new org.eclipse.swt.graphics.Image(display, imgData);
