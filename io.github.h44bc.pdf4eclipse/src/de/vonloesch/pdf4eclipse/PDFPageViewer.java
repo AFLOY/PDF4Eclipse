@@ -199,7 +199,7 @@ public class PDFPageViewer extends Canvas implements PaintListener, IPreferenceC
 						@Override
 						public void run() {
 							currentPage = page;
-							editor.reverseSearch(r.getX(), page.getHeight() - r.getY());
+							editor.reverseSearch(targetPageNr, r.getX(), page.getHeight() - r.getY());
 						}
 					});
 				}
