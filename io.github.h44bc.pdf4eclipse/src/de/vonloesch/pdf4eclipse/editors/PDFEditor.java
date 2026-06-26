@@ -329,7 +329,7 @@ public class PDFEditor extends EditorPart implements IResourceChangeListener,
 						return;
 					}
 					Point o = sc.getOrigin();
-					sc.setOrigin(o.x-(e.x-start.x), o.y-(e.y-start.y));
+					setOrigin(o.x-(e.x-start.x), o.y-(e.y-start.y));
 				}
 			};
 			
@@ -370,7 +370,7 @@ public class PDFEditor extends EditorPart implements IResourceChangeListener,
 						if (y > pheight - height) {
 							y = pheight - height;
 						}
-						sc.setOrigin(sc.getOrigin().x, y);
+						setOrigin(sc.getOrigin().x, y);
 					}
 					else {
 						//We are at the end of the page
@@ -384,7 +384,7 @@ public class PDFEditor extends EditorPart implements IResourceChangeListener,
 					if (p.y > 0) {
 						int y = p.y - pInc;
 						if (y < 0) y = 0;
-						sc.setOrigin(sc.getOrigin().x, y);
+						setOrigin(sc.getOrigin().x, y);
 					}
 					else {
 						//We are at the top of the page
@@ -396,26 +396,26 @@ public class PDFEditor extends EditorPart implements IResourceChangeListener,
 				}
 				else if (e.keyCode == SWT.ARROW_DOWN) {
 					if (p.y < pheight - height) {
-						sc.setOrigin(sc.getOrigin().x, p.y + lInc);
+						setOrigin(sc.getOrigin().x, p.y + lInc);
 					}					
 				}
 				else if (e.keyCode == SWT.ARROW_UP) {
 					if (p.y > 0) {
 						int y = p.y - lInc;
 						if (y < 0) y = 0;
-						sc.setOrigin(sc.getOrigin().x, y);
+						setOrigin(sc.getOrigin().x, y);
 					}					
 				}
 				else if (e.keyCode == SWT.ARROW_RIGHT) {
 					if (p.x < sc.getContent().getBounds().width - sc.getClientArea().width) {
-						sc.setOrigin(p.x + hInc, sc.getOrigin().y);
+						setOrigin(p.x + hInc, sc.getOrigin().y);
 					}
 				}
 				else if (e.keyCode == SWT.ARROW_LEFT) {
 					if (p.x > 0) {
 						int x = p.x - hInc;
 						if (x < 0) x = 0;
-						sc.setOrigin(x, sc.getOrigin().y);
+						setOrigin(x, sc.getOrigin().y);
 					}					
 				}
 				else if (e.keyCode == SWT.HOME) {
@@ -773,15 +773,14 @@ public class PDFEditor extends EditorPart implements IResourceChangeListener,
 	}
 
 	private void setOrigin(int x, int y) {
-		sc.setRedraw(false);
 		sc.setOrigin(x, y);
-		sc.setRedraw(true);
+		if (pv != null && !pv.isDisposed()) {
+			pv.redrawVisibleArea();
+		}
 	}
 
 	void setOrigin(Point p) {
-		sc.setRedraw(false);
-		if (p != null) sc.setOrigin(p);
-		sc.setRedraw(true);
+		if (p != null) setOrigin(p.x, p.y);
 	}
 
 	private boolean isReloading = false;
@@ -925,23 +924,12 @@ public class PDFEditor extends EditorPart implements IResourceChangeListener,
 
 	private void syncCurrentPageFromScroll() {
 		if (pv == null || !pv.isContinuousMode()) return;
-		int[] offsets = pv.getPageOffsets();
-		int[] heights = pv.getPageHeights();
-		if (offsets == null || heights == null || f == null) return;
+		if (pv.getPageOffsets() == null || f == null) return;
 		
 		int currentY = sc.getOrigin().y;
 		int viewportH = sc.getClientArea().height;
 		int centerY = currentY + viewportH / 2;
-		
-		int bestPage = 1;
-		for (int i = 0; i < offsets.length; i++) {
-			int py = offsets[i];
-			int ph = heights[i];
-			if (centerY >= py && centerY <= py + ph) {
-				bestPage = i + 1;
-				break;
-			}
-		}
+		int bestPage = pv.getPageNumberForY(centerY);
 		
 		if (bestPage != currentPage) {
 			currentPage = bestPage;

@@ -136,6 +136,10 @@ This fork prioritizes conservative maintenance.
 - Avoid unnecessary package renames
 - Favor incremental fixes over invasive redesign
 
+## Known Issues
+
+- When scrolling very large pages, such as A0 poster-sized PDFs, newly exposed areas can briefly flash black during mouse wheel movement. This is a known rendering issue and is left for a later fix.
+
 ## License Notes
 
 License notices are inherited from the upstream project and related bundled components.

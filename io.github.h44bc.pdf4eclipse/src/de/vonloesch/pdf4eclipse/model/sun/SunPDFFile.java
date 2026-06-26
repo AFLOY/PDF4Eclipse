@@ -29,6 +29,8 @@ public class SunPDFFile implements IPDFFile {
 	PDFFile pdfFile;
 	File input;
 	int pageNumbers;
+	float[] pageWidths;
+	float[] pageHeights;
 	
 	public SunPDFFile(File file) throws IOException{
 		input = file;
@@ -61,6 +63,8 @@ public class SunPDFFile implements IPDFFile {
 		ff.close();
 		pdfFile = new PDFFile(buf);	  
 		pageNumbers = pdfFile.getNumPages();
+		pageWidths = new float[pageNumbers + 1];
+		pageHeights = new float[pageNumbers + 1];
 	}
 	
 	@Override
@@ -76,5 +80,27 @@ public class SunPDFFile implements IPDFFile {
 	
 	public PDFFile getInternalPDFFile() {
 		return pdfFile;
+	}
+
+	@Override
+	public float getPageWidth(int pageNr) {
+		if (pageNr < 1 || pageNr > pageNumbers) return 0;
+		if (pageWidths[pageNr] <= 0) {
+			IPDFPage page = getPage(pageNr);
+			pageWidths[pageNr] = page.getWidth();
+			pageHeights[pageNr] = page.getHeight();
+		}
+		return pageWidths[pageNr];
+	}
+
+	@Override
+	public float getPageHeight(int pageNr) {
+		if (pageNr < 1 || pageNr > pageNumbers) return 0;
+		if (pageHeights[pageNr] <= 0) {
+			IPDFPage page = getPage(pageNr);
+			pageWidths[pageNr] = page.getWidth();
+			pageHeights[pageNr] = page.getHeight();
+		}
+		return pageHeights[pageNr];
 	}
 }

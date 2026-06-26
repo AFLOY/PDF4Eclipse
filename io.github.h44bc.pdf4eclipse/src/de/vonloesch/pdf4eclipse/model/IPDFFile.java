@@ -34,4 +34,7 @@ public interface IPDFFile {
 	IPDFPage getPage(int pageNr);
 	
 	void close();
+
+	float getPageWidth(int pageNr);
+	float getPageHeight(int pageNr);
 }
